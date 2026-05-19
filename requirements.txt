@@ -1,0 +1,17 @@
+pandas>=2.2
+numpy>=1.26
+PyYAML>=6.0
+python-dotenv>=1.0
+requests>=2.32
+matplotlib>=3.8
+Pillow>=10.0
+pytesseract>=0.3.10
+python-pptx>=1.0
+google-analytics-data>=0.18
+google-api-python-client>=2.140
+google-auth>=2.32
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+APScheduler>=3.10
+Jinja2>=3.1
+playwright>=1.50

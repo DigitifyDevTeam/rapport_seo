@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+secrets/
+client_secret_*.json
+apis/client_secret_*.json
+outputs/
+templates/seo_report_template.pptx
+.idea/
+.vscode/
+.DS_Store

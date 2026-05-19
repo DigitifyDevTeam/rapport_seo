@@ -1,0 +1,63 @@
+# One entry per client. Only the sources you fill will be queried; the
+# others are skipped gracefully so you can roll out integrations one at a
+# time.
+#
+# Run a report with:
+#   python -m src.pipeline.run_monthly --client example --month 2026-03
+#   python -m src.pipeline.run_monthly --client origincbd --month 2026-03
+
+defaults:
+  agency_name: DIGITIFY
+  timezone: Europe/Paris
+  currency: EUR
+
+clients:
+  - id: origincbd
+    name: Origincbd.fr
+    website: https://originecbd.fr
+    report_profile:
+      client: Origine Diffusion
+      activity: E-commerce, Boutique CBD
+      site_name: Origine CBD
+      url: https://originecbd.fr/
+      seo_pack: Pack PRO +
+      seo_since: Janvier 2021
+    ga4:
+      property_id: "REMPLACER_ID_PROPRIETE_GA4"
+      organic_channel: "Organic Search"
+    gsc:
+      site_url: "https://originecbd.fr/"
+    gmb:
+      account_id: ""
+      location_id: ""
+      # Label shown on business.google.com/locations (partial match OK).
+      ui_project_name: "Origin"
+      # Fallback Google Search query if GBP list does not open Performance.
+      ui_search_query: "Origine CBD Paris"
+    clarity:
+      project_id: "iqfjm1ewdj"
+    delivery:
+      emails: []
+
+  - id: example
+    name: Example Client
+    website: https://example.com
+    report_profile:
+      client: Example Client
+      activity: Démo
+      site_name: Example
+      url: https://example.com
+      seo_pack: Pack Standard
+      seo_since: "—"
+    ga4:
+      property_id: "000000000"
+      organic_channel: "Organic Search"
+    gsc:
+      site_url: "sc-domain:example.com"
+    gmb:
+      account_id: "accounts/0000000000"
+      location_id: "locations/0000000000"
+    clarity:
+      project_id: ""
+    delivery:
+      emails: []
