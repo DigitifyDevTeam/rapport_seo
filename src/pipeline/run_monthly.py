@@ -207,9 +207,6 @@ def _build_report_data(client: ClientConfig, period: Period,
             current.get("gmb", {}).get("daily", pd.DataFrame()), chart_dir)),
     }
 
-    summary = insights.build_executive_summary(kpis,
-                                                 movements.get("wins"),
-                                                 movements.get("losses"))
     commentaries = insights.build_commentaries(
         kpis,
         current_pages_daily=current.get("ga4", {}).get("pages_daily",
@@ -239,13 +236,19 @@ def _build_report_data(client: ClientConfig, period: Period,
     if clarity_ui is not None:
         clarity = _merge_clarity_ui(clarity, clarity_ui)
 
+    final_sections = insights.build_final_summary_sections(
+        kpis,
+        clarity=clarity,
+        gmb_kpis=gmb_ui_kpis,
+    )
+
     data: dict[str, Any] = {
         "client_name": client.name,
         "agency_name": client.agency_name,
         "period_label": period.human_label(),
         "report_date": datetime.now().strftime("%Y-%m-%d"),
         **client.cover_profile_placeholders(),
-        "executive_summary": summary,
+        **final_sections,
         "organic_performance_title": organic_slide.title,
         "organic_perf_users": organic_slide.kpis[0][1],
         "organic_perf_new_users": organic_slide.kpis[1][1],
@@ -890,7 +893,8 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     if not TEMPLATE_PATH.exists():
         raise FileNotFoundError(
             f"Template not found at {TEMPLATE_PATH}. "
-            "Run `python scripts/build_template.py` first.")
+            "Run `python scripts/build_template.py` once to create it, or set "
+            "SEO_REPORT_TEMPLATE_PATH in .env to your customized .pptx file.")
     render_pptx(TEMPLATE_PATH, pptx_path, data)
     logger.info("[%s] wrote %s", client.id, pptx_path)
 

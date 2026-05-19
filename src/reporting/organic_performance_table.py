@@ -25,10 +25,10 @@ def _style_cell(cell, *, fill: RGBColor, bold: bool = False,
     cell.fill.fore_color.rgb = fill
     tf = cell.text_frame
     tf.word_wrap = True
-    tf.margin_left = Pt(4)
-    tf.margin_right = Pt(4)
-    tf.margin_top = Pt(3)
-    tf.margin_bottom = Pt(3)
+    tf.margin_left = Pt(6)
+    tf.margin_right = Pt(6)
+    tf.margin_top = Pt(4)
+    tf.margin_bottom = Pt(4)
     for paragraph in tf.paragraphs:
         paragraph.alignment = align
         for run in paragraph.runs:

@@ -374,6 +374,215 @@ def _kpi_line(kpi: KpiValue) -> str | None:
             f"{kpi.value:,.0f}{suffix}.")
 
 
+def _section_body(lines: list[str]) -> str:
+    return "\n".join(line for line in lines if line.strip())
+
+
+def build_final_summary_sections(
+        kpis: KpiBundle,
+        *,
+        clarity: dict[str, str] | None = None,
+        gmb_kpis: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Section bodies for the multi-panel Synthèse finale slide."""
+    clarity = clarity or {}
+    gmb_kpis = gmb_kpis or {}
+    return {
+        "final_summary_brief": _plain_overview(kpis),
+        "final_summary_website": _section_body(_plain_website_lines(kpis)[:3]),
+        "final_summary_search": _section_body(_plain_search_lines(kpis)[:3]),
+        "final_summary_clarity": _section_body(
+            _plain_clarity_lines(clarity)[:3]),
+        "final_summary_gmb": _section_body(_plain_gmb_lines(gmb_kpis)[:3]),
+    }
+
+
+def build_final_summary(
+        kpis: KpiBundle,
+        *,
+        clarity: dict[str, str] | None = None,
+        gmb_kpis: dict[str, str] | None = None,
+) -> str:
+    """Plain-language recap (legacy single text block)."""
+    clarity = clarity or {}
+    gmb_kpis = gmb_kpis or {}
+    sections: list[tuple[str, list[str]]] = [
+        ("EN BREF", [_plain_overview(kpis)]),
+        ("VOTRE SITE WEB", _plain_website_lines(kpis)),
+        ("VOTRE VISIBILITÉ SUR GOOGLE", _plain_search_lines(kpis)),
+        ("EXPÉRIENCE DES VISITEURS", _plain_clarity_lines(clarity)),
+        ("VOTRE FICHE GOOGLE", _plain_gmb_lines(gmb_kpis)),
+        ("CE QU'IL FAUT RETENIR", _plain_takeaways(kpis, gmb_kpis)),
+    ]
+    return _compose_sections(sections)
+
+
+def _plain_trend_phrase(delta_pct: float | None, *, up_is_good: bool = True) -> str:
+    trend = _trend_word(delta_pct, up_is_good=up_is_good)
+    if trend == "positive":
+        return "en hausse par rapport au mois dernier"
+    if trend == "préoccupante":
+        return "en baisse nette par rapport au mois dernier"
+    if trend == "à surveiller":
+        return "légèrement en baisse par rapport au mois dernier"
+    return "stable par rapport au mois dernier"
+
+
+def _plain_overview(kpis: KpiBundle) -> str:
+    traffic = _plain_trend_phrase(kpis.sessions.delta_pct)
+    search = _plain_trend_phrase(kpis.clicks.delta_pct)
+    return (
+        f"Ce mois-ci, le trafic sur votre site est {traffic}, "
+        f"et les clics depuis Google sont {search}."
+    )
+
+
+def _plain_website_lines(kpis: KpiBundle) -> list[str]:
+    lines = [
+        (f"• {_format_count(kpis.sessions.value)} visites sur le site "
+         f"({_plain_trend_phrase(kpis.sessions.delta_pct)})."),
+        (f"• {_format_count(kpis.users.value)} visiteurs uniques "
+         f"({_plain_trend_phrase(kpis.users.delta_pct)})."),
+        (f"• {_format_count(kpis.conversions.value)} actions importantes "
+         f"(achats, contacts, demandes…) "
+         f"({_plain_trend_phrase(kpis.conversions.delta_pct)})."),
+    ]
+    for sentence in _ga4_analysis(kpis)[:2]:
+        lines.append(f"• {sentence}")
+    return lines
+
+
+def _plain_search_lines(kpis: KpiBundle) -> list[str]:
+    lines = [
+        (f"• {_format_count(kpis.clicks.value)} clics vers votre site "
+         f"depuis Google ({_plain_trend_phrase(kpis.clicks.delta_pct)})."),
+        (f"• {_format_count(kpis.impressions.value)} fois où votre site "
+         f"est apparu dans les résultats Google "
+         f"({_plain_trend_phrase(kpis.impressions.delta_pct)})."),
+    ]
+    if kpis.avg_position.value:
+        pos_phrase = _position_mom_phrase(kpis.avg_position)
+        lines.append(
+            f"• Position moyenne dans Google : {kpis.avg_position.value:.1f} "
+            f"({pos_phrase.replace('vs mois précédent', 'par rapport au mois dernier')})."
+        )
+    for sentence in _gsc_analysis(kpis)[:2]:
+        lines.append(f"• {sentence}")
+    return lines
+
+
+def _plain_clarity_lines(clarity: dict[str, str]) -> list[str]:
+    sessions = (clarity.get("sessions") or "").strip()
+    pages = (clarity.get("pages_per_session") or "").strip()
+    scroll = (clarity.get("scroll_depth") or "").strip()
+    active = (clarity.get("active_time") or "").strip()
+    commentary = (clarity.get("commentary") or "").strip()
+
+    if sessions.lower() in ("", "n/a"):
+        return ["• Données d'expérience utilisateur indisponibles ce mois-ci."]
+
+    lines = [f"• {sessions} sessions analysées sur votre site."]
+    if pages and pages.lower() != "n/a":
+        lines.append(f"• {pages} pages consultées en moyenne par visite.")
+    if scroll and scroll.lower() != "n/a":
+        lines.append(f"• Les visiteurs descendent jusqu'à {scroll} de la page.")
+    if active and active.lower() != "n/a":
+        lines.append(f"• Temps d'activité moyen : {active}.")
+
+    if commentary and "indisponibles" not in commentary.lower():
+        first = commentary.split(".")[0].strip()
+        if (first and len(first) > 12
+                and first.lower() not in ("ok", "n/a")
+                and first not in lines[0]):
+            lines.append(f"• {first}.")
+    elif len(lines) == 1:
+        lines.append(
+            "• L'expérience de navigation reste globalement fluide "
+            "sur les pages les plus visitées."
+        )
+    return lines
+
+
+def _plain_gmb_lines(gmb_kpis: dict[str, str]) -> list[str]:
+    labels = {
+        "overview": "interactions au total avec votre fiche",
+        "calls": "appels téléphoniques",
+        "bookings": "réservations",
+        "directions": "demandes d'itinéraire",
+        "website_clicks": "clics vers votre site web",
+    }
+    parts: list[str] = []
+    for key, label in labels.items():
+        raw = (gmb_kpis.get(key) or "").strip()
+        if raw and raw.lower() != "n/a":
+            parts.append(f"• {raw} {label}.")
+
+    if not parts:
+        return ["• Données Google Business Profile indisponibles ce mois-ci."]
+    if len(parts) == 1:
+        parts.append(
+            "• Votre fiche Google reste un canal de contact direct "
+            "pour les clients locaux."
+        )
+    return parts
+
+
+def _plain_takeaways(
+        kpis: KpiBundle,
+        gmb_kpis: dict[str, str],
+) -> list[str]:
+    lines: list[str] = []
+    traffic = _trend_word(kpis.sessions.delta_pct)
+    search = _trend_word(kpis.clicks.delta_pct)
+    conv = _trend_word(kpis.conversions.delta_pct)
+
+    if traffic == "positive" and conv != "positive":
+        lines.append(
+            "• Le trafic progresse : l'enjeu est de transformer ces visites "
+            "en contacts ou ventes sur les pages les plus consultées."
+        )
+    elif traffic == "préoccupante":
+        lines.append(
+            "• Le trafic sur le site recule : nous prioriserons les pages "
+            "et contenus à remettre en avant le mois prochain."
+        )
+    else:
+        lines.append(
+            "• Le trafic reste globalement stable : consolider les pages "
+            "qui performent le mieux."
+        )
+
+    if search == "positive":
+        lines.append(
+            "• Votre visibilité sur Google progresse : les optimisations "
+            "SEO portent leurs fruits."
+        )
+    elif search == "préoccupante":
+        lines.append(
+            "• Moins de clics depuis Google ce mois-ci : revoir les titres "
+            "et descriptions affichés dans les résultats de recherche."
+        )
+    else:
+        lines.append(
+            "• La visibilité sur Google reste stable : poursuivre le suivi "
+            "des pages les plus consultées."
+        )
+
+    if conv in ("préoccupante", "à surveiller"):
+        lines.append(
+            "• Les actions importantes (contacts, achats…) reculent : "
+            "améliorer les pages d'accueil et les appels à l'action."
+        )
+
+    gmb_total = (gmb_kpis.get("overview") or "").strip()
+    if gmb_total and gmb_total.lower() != "n/a":
+        lines.append(
+            "• Votre fiche Google génère des contacts : maintenir les avis, "
+            "photos et horaires à jour."
+        )
+    return lines[:4]
+
+
 def build_executive_summary(kpis: KpiBundle,
                               keyword_wins: pd.DataFrame | None = None,
                               keyword_losses: pd.DataFrame | None = None

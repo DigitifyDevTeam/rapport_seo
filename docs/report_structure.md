@@ -9,24 +9,28 @@ The template is generated programmatically by
 stay consistent with the code that fills them
 (`src/reporting/pptx_report.py`).
 
+**Permanent custom template:** after the first build, edit
+`templates/seo_report_template.pptx` in PowerPoint. Monthly runs only fill
+data; they never regenerate the layout. See `templates/README.md`. The build
+script refuses to overwrite an existing file unless you pass `--force`.
+
 ## Slide-by-slide layout
 
 | # | Slide | Purpose | Placeholders |
 |---|-------|---------|--------------|
-| 1 | Cover | Client name, reporting period, agency branding | `{{client_name}}`, `{{period_label}}`, `{{agency_name}}`, `{{report_date}}` |
-| 2 | Executive Summary | 3 to 5 high level bullet points | `{{executive_summary}}` |
-| 3 | KPI Overview | Big numbers + MoM deltas | `{{sessions}}`, `{{sessions_delta}}`, `{{users}}`, `{{users_delta}}`, `{{conversions}}`, `{{conversions_delta}}`, `{{clicks}}`, `{{clicks_delta}}`, `{{impressions}}`, `{{impressions_delta}}`, `{{ctr}}`, `{{ctr_delta}}`, `{{avg_position}}`, `{{avg_position_delta}}` |
-| 4 | Organic Traffic (GA4) | Sessions/users line chart | `{{chart_ga4_traffic}}`, `{{ga4_commentary}}` |
-| 5 | Conversions (GA4) | Conversions over time | `{{chart_ga4_conversions}}`, `{{conversions_commentary}}` |
-| 6 | Search Performance (GSC) | Clicks vs impressions line chart | `{{chart_gsc_clicks_impressions}}`, `{{gsc_commentary}}` |
-| 7 | Top Queries (GSC) | Top 10 queries table | `{{table_top_queries}}` |
-| 8 | Top Pages (GSC) | Top 10 pages table | `{{table_top_pages}}` |
-| 9 | Keyword Movements (GSC) | Wins / losses table | `{{table_keyword_wins}}`, `{{table_keyword_losses}}` |
-| 10 | Local SEO (GMB) | Calls, directions, website clicks | `{{chart_gmb_actions}}`, `{{gmb_commentary}}` |
-| 11 | Behavior (Clarity) | Sessions, rage clicks, scroll depth | `{{clarity_sessions}}`, `{{clarity_rage_clicks}}`, `{{clarity_scroll_depth}}`, `{{clarity_commentary}}` |
-| 12 | Work Completed | Bullet list of actions delivered | `{{work_completed}}` |
-| 13 | Recommendations | Bullet list of next month actions | `{{recommendations}}` |
-| 14 | Appendix | Detailed tables / disclaimers | `{{appendix_notes}}` |
+| 1 | Cover | Client name, reporting period, agency branding | `{{client_name}}`, `{{period_label}}`, `{{agency_name}}`, `{{report_date}}`, cover profile fields |
+| 2 | Table des matières | Navigation | (static, generated from `TOC_ITEMS`) |
+| 3 | Vue d'ensemble des KPI | Big numbers + MoM deltas + fixed French KPI definitions (préambules) under each label | `{{sessions}}`, `{{sessions_delta}}`, … (see `KPI_PREAMBLES` in `scripts/build_template.py`) |
+| 4 | Performance organique (GA4) | Organic KPI row + period comparison table | `{{organic_performance_title}}`, `{{organic_perf_*}}`, `{{table_organic_performance}}` |
+| 5 | Trafic organique (GA4) | Sessions/users line chart | `{{chart_ga4_traffic}}`, `{{ga4_commentary}}` |
+| 6 | Pages et écrans (GA4) | Engagement — views per day | `{{chart_ga4_pages_screens}}`, `{{ga4_pages_commentary}}` |
+| 7 | Comportement (Clarity) | UX KPIs + dashboard screenshots | `{{clarity_*}}`, `{{chart_clarity_*}}`, `{{clarity_commentary}}` |
+| 8 | Performance Search (GSC) | Clicks vs impressions line chart | `{{chart_gsc_clicks_impressions}}`, `{{gsc_commentary}}` |
+| 9 | Top pages (GSC) | Top landing pages table | `{{table_top_pages}}` |
+| 10 | Présence Google Business Profile | Public fiche + interaction KPIs | `{{chart_gmb_business_card}}`, `{{gmb_*}}` |
+| 11 | Interactions clients (détail) | GMB performance tab screenshots | `{{chart_gmb_overview}}`, `{{chart_gmb_calls}}`, etc. |
+| 12 | Synthèse finale | Plain-language recap (brief + 4 topic cards) | `{{final_summary_brief}}`, `{{final_summary_website}}`, `{{final_summary_search}}`, `{{final_summary_clarity}}`, `{{final_summary_gmb}}` |
+| 13 | Merci pour votre attention | Closing slide | (static) |
 
 ## Placeholder syntax
 
@@ -53,3 +57,9 @@ PPTX.
 A delta is rendered as `+12.4%` or `-3.1%` and color coded in the template
 through conditional placeholders such as `{{sessions_delta}}` which the
 runtime replaces with the formatted value plus an arrow character.
+
+## Final summary
+
+The **Synthèse finale** slide uses five placeholders filled by
+`insights.build_final_summary_sections()` in `src/insights/generator.py`:
+a brief strip and four topic cards (site, Google visibility, Clarity, GMB).

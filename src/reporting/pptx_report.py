@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import shutil
 import tempfile
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +39,7 @@ _TABLE_COLUMN_WIDTHS: dict[str, tuple[float, ...]] = {
 }
 
 # Inset applied on each side of chart/screenshot placeholders (EMU fractions).
-_PICTURE_MARGIN_RATIO = 0.06
+_PICTURE_MARGIN_RATIO = 0.04
 
 
 class ReportBuilder:
@@ -126,7 +125,22 @@ class ReportBuilder:
                 self._replace_with_table(slide, shape, data.get(name),
                                           table_name=name)
                 return
+        if (len(placeholders) == 1
+                and placeholders[0].startswith("final_summary_")):
+            self._replace_final_summary(shape, placeholders[0], data)
+            return
         self._replace_text(shape, placeholders, data)
+
+    def _replace_final_summary(self, shape, name: str,
+                                data: dict[str, Any]) -> None:
+        body = _stringify(data.get(name))
+        if name == "final_summary_brief":
+            mode = "brief"
+        elif name == "final_summary_takeaways":
+            mode = "takeaway"
+        else:
+            mode = "card"
+        self._set_summary_body(shape.text_frame, body, mode=mode)
 
     def _replace_text(self, shape, placeholders: list[str],
                        data: dict[str, Any]) -> None:
@@ -146,6 +160,48 @@ class ReportBuilder:
                 new_text = new_text.replace("{{" + name + "}}",
                                               _stringify(data.get(name)))
             self._set_text_frame(tf, new_text)
+
+    @staticmethod
+    def _set_summary_body(tf, text: str, *,
+                          mode: str = "card") -> None:
+        """Format Synthèse finale panel text.
+
+        *mode*: "brief" (full-width intro), "card" (topic column),
+                "takeaway" (dark strip at bottom).
+        """
+        sizes = {"brief": Pt(12), "card": Pt(11), "takeaway": Pt(10)}
+        spacings = {"brief": Pt(5), "card": Pt(3), "takeaway": Pt(3)}
+        max_lines = {"brief": 3, "card": 4, "takeaway": 6}
+        base_size = sizes.get(mode, Pt(9))
+        space = spacings.get(mode, Pt(2))
+        cap = max_lines.get(mode, 5)
+
+        for paragraph in list(tf.paragraphs)[1:]:
+            paragraph._p.getparent().remove(paragraph._p)  # noqa: SLF001
+        first = tf.paragraphs[0]
+        first.clear()
+        tf.word_wrap = True
+        tf.margin_left = Pt(2)
+        tf.margin_right = Pt(2)
+        tf.margin_top = Pt(0)
+        tf.margin_bottom = Pt(0)
+
+        lines = (text.split("\n") if text else [""])[:cap]
+        is_dark = mode == "takeaway"
+        for idx, line in enumerate(lines):
+            paragraph = first if idx == 0 else tf.add_paragraph()
+            paragraph.space_after = space
+            paragraph.line_spacing = 1.08
+            run = paragraph.add_run()
+            run.text = line
+            run.font.size = base_size
+            run.font.name = "Segoe UI"
+            if is_dark:
+                run.font.color.rgb = RGBColor(0xE2, 0xE8, 0xF0)
+            elif line.strip().startswith("•"):
+                run.font.color.rgb = ROW_TEXT
+            else:
+                run.font.color.rgb = PRIMARY
 
     @staticmethod
     def _set_text_frame(tf, text: str) -> None:
@@ -314,5 +370,4 @@ def _stringify(value: Any) -> str:
 def render(template_path: Path, output_path: Path,
             data: dict[str, Any]) -> Path:
     """Convenience wrapper for one-shot rendering."""
-    builder = ReportBuilder(deepcopy(template_path))
-    return builder.build(data, output_path)
+    return ReportBuilder(template_path).build(data, output_path)
