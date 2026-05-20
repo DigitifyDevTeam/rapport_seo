@@ -4,6 +4,7 @@
 #
 # Run a report with:
 #   python -m src.pipeline.run_monthly --client example --month 2026-03
+#   python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 #   python -m src.pipeline.run_monthly --client origincbd --month 2026-03
 
 defaults:
@@ -12,6 +13,36 @@ defaults:
   currency: EUR
 
 clients:
+  - id: deepcleaning
+    name: DeepCleaning.fr
+    website: https://deepcleaning.fr
+    report_profile:
+      client: DeepCleaning
+      activity: Nettoyage écologique à domicile (canapés, matelas, tapis)
+      site_name: DeepCleaning
+      url: https://deepcleaning.fr/
+      seo_pack: Pack PRO +
+      seo_since: "—"
+    ga4:
+      property_id: "402338514"
+      organic_channel: "Organic Search"
+    gsc:
+      site_url: "https://deepcleaning.fr/"
+    gmb:
+      account_id: ""
+      location_id: ""
+      # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
+      ui_project_name: "Deep Cleaning"
+      ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
+    clarity:
+      project_id: "lfjtuxge3c"
+      # No e-commerce: skip Produits populaires widget + PPT column (Origincbd unchanged).
+      ui_skip_widgets:
+        - popular_products
+      pptx_hide_popular_products: true
+    delivery:
+      emails: []
+
   - id: origincbd
     name: Origincbd.fr
     website: https://originecbd.fr

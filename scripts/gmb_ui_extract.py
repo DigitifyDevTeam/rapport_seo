@@ -26,6 +26,10 @@ Usage:
       --out outputs/origincbd/2026-04/gmb_ui.json ^
       --project-name Origincbd ^
       --profile outputs/_sessions/chrome-profile-gmb ^
+
+  DeepCleaning wrapper::
+
+      python scripts/clients/deepcleaning/gmb_ui_extract.py 2026-04
       [--period-start 2026-04-01 --period-end 2026-04-30] ^
       [--show]
 """
@@ -121,7 +125,69 @@ def _parse_args() -> argparse.Namespace:
                          help="Optional full-page screenshot path.")
     parser.add_argument("--show", action="store_true",
                          help="Run non-headless for debugging.")
+    parser.add_argument(
+        "--no-search",
+        action="store_true",
+        help="Skip Google Search; open business.google.com and select project only.",
+    )
+    parser.add_argument(
+        "--prefer-gmb-app",
+        action="store_true",
+        help="Try business.google.com before Google Search (Knowledge Panel).",
+    )
+    parser.add_argument(
+        "--project-names",
+        default="",
+        help="Comma-separated extra location labels (aliases for --project-name).",
+    )
+    parser.add_argument(
+        "--dashboard-url",
+        default="",
+        help="Open this URL directly (e.g. saved Performance dashboard from login).",
+    )
+    parser.add_argument(
+        "--manual",
+        action="store_true",
+        help="You navigate to the Performance dashboard; press ENTER to scrape KPIs.",
+    )
+    parser.add_argument(
+        "--manual-skip-period",
+        action="store_true",
+        help="With --manual: do not change the date picker (set it yourself).",
+    )
     return parser.parse_args()
+
+
+def _pick_dashboard_page(context, fallback: Page) -> Page:
+    """Prefer the tab that already shows the GBP Performance overlay."""
+    best: Page | None = None
+    for candidate in context.pages:
+        if not _page_alive(candidate):
+            continue
+        if _search_is_blocked(candidate):
+            continue
+        url = candidate.url or ""
+        if "#mpd=" in url or "promote/performance" in url:
+            return candidate
+        if "business.google.com" in url:
+            best = candidate
+    return best if best is not None else fallback
+
+
+def _persist_session(session_path: Path, context, page: Page) -> None:
+    """Save cookies + current URL for the next run."""
+    target = _pick_dashboard_page(context, page)
+    url = ""
+    if _page_alive(target):
+        try:
+            url = target.url
+        except Exception:
+            url = ""
+    payload = {"url": url, "storage_state": context.storage_state()}
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    _log(f"session: saved {session_path} (url={url[:80]}…)" if len(url) > 80
+         else f"session: saved {session_path} (url={url})")
 
 
 def _now_iso() -> str:
@@ -164,6 +230,29 @@ def _resolve_project_name(args: argparse.Namespace) -> str:
     return ""
 
 
+def _project_name_candidates(args: argparse.Namespace) -> list[str]:
+    """Ordered unique labels to match on business.google.com/locations."""
+    names: list[str] = []
+    for raw in (args.project_name, getattr(args, "project_names", "")):
+        if not raw:
+            continue
+        for part in str(raw).split(","):
+            part = part.strip()
+            if part and part not in names:
+                names.append(part)
+    for candidate in (args.business_name, args.location_name):
+        if candidate and str(candidate).strip():
+            part = str(candidate).strip()
+            if part not in names:
+                names.append(part)
+    return names
+
+
+def _search_is_blocked(page: Page) -> bool:
+    url = (page.url or "").lower()
+    return "google.com/sorry" in url or "/sorry/" in url
+
+
 def open_gmb_app(page: Page, start_url: str = "") -> bool:
     """Navigate to Google Business Profile."""
     url = (start_url or "").strip() or GMB_LOCATIONS_URL
@@ -186,10 +275,7 @@ def open_gmb_app(page: Page, start_url: str = "") -> bool:
     return True
 
 
-def select_gmb_project(page: Page, project_name: str) -> bool:
-    """Click the location row/card matching ``project_name``."""
-    if not project_name:
-        return True
+def _try_select_project_label(page: Page, project_name: str) -> bool:
     escaped = re.escape(project_name)
     patterns = [
         re.compile(escaped, re.I),
@@ -212,9 +298,69 @@ def select_gmb_project(page: Page, project_name: str) -> bool:
             _safe_wait_idle(page, timeout=20_000)
             time.sleep(2.0)
             return True
+    except Exception:
+        pass
+    return False
+
+
+JS_SELECT_BY_KEYWORDS = r"""
+(keywords) => {
+  const kws = (keywords || []).map(k => String(k).toLowerCase()).filter(k => k.length >= 3);
+  if (!kws.length) return null;
+  const nodes = document.querySelectorAll(
+    'a, button, [role="row"], [role="listitem"], div, span'
+  );
+  for (const el of nodes) {
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 140) continue;
+    const low = t.toLowerCase();
+    const hits = kws.filter(k => low.includes(k)).length;
+    if (hits >= Math.min(2, kws.length) || (kws.length === 1 && hits === 1)) {
+      try {
+        el.click();
+        return t;
+      } catch (e) { /* continue */ }
+    }
+  }
+  return null;
+}
+"""
+
+
+def select_gmb_project(page: Page, project_name: str,
+                       aliases: list[str] | None = None) -> bool:
+    """Click the location row/card matching ``project_name`` or an alias."""
+    names: list[str] = []
+    if project_name and str(project_name).strip():
+        names.append(str(project_name).strip())
+    for alias in aliases or []:
+        alias = str(alias).strip()
+        if alias and alias not in names:
+            names.append(alias)
+    if not names:
+        return True
+
+    for label in names:
+        if _try_select_project_label(page, label):
+            return True
+
+    keywords: list[str] = []
+    for label in names:
+        for token in re.split(r"[\s\-_.]+", label):
+            token = token.strip().lower()
+            if len(token) >= 4 and token not in keywords:
+                keywords.append(token)
+    try:
+        picked = page.evaluate(JS_SELECT_BY_KEYWORDS, keywords)
+        if picked:
+            _log(f"project: selected via keywords {keywords!r} -> {picked!r}")
+            _safe_wait_idle(page, timeout=20_000)
+            time.sleep(2.0)
+            return True
     except Exception as exc:
-        _log(f"project: JS click failed: {exc}")
-    _log(f"project: could not find {project_name!r} on the page.")
+        _log(f"project: keyword select failed: {exc}")
+
+    _log(f"project: could not find any of {names!r} on the page.")
     return False
 
 
@@ -343,6 +489,9 @@ def open_search(page: Page, query: str) -> bool:
 
     _safe_wait_idle(page, timeout=15_000)
     time.sleep(2.5)
+    if _search_is_blocked(page):
+        _log("search: blocked by Google (CAPTCHA); use business.google.com fallback.")
+        return False
     return True
 
 
@@ -425,6 +574,56 @@ JS_CLICK_BY_TEXT = "((pattern) => {\n" + _JS_HELPERS_BODY + r"""
 """
 
 
+JS_CLICK_OWNER_INTERACTIONS = "(() => {\n" + _JS_HELPERS_BODY + r"""
+  const re = /\\d[\\d\\s\\u00A0\\u202F]*\\s*interactions?\\s+avec\\s+les\\s+clients/i;
+  let best = null;
+  let bestArea = Infinity;
+  for (const el of document.querySelectorAll(
+    'a, button, [role="link"], [role="button"], span, div')) {
+    const t = _gmbNormalize(el.textContent || el.innerText || '');
+    if (!re.test(t) || t.length > 120) continue;
+    if (typeof el.click !== 'function') continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.left > window.innerWidth * 0.58) continue;
+    let node = el;
+    let inOwner = false;
+    for (let i = 0; i < 14 && node; i++) {
+      const pt = _gmbNormalize(node.textContent || '');
+      if (pt.includes('Votre établissement sur Google')
+          || pt.includes('Votre etablissement sur Google')) {
+        inOwner = true;
+        break;
+      }
+      node = node.parentElement;
+    }
+    if (!inOwner) continue;
+    const area = rect.width * rect.height;
+    if (area < bestArea) {
+      best = el;
+      bestArea = area;
+    }
+  }
+  if (!best) {
+    for (const el of document.querySelectorAll('a, button, span, div')) {
+      const t = _gmbNormalize(el.textContent || '');
+      if (!re.test(t) || t.length > 120) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.left > window.innerWidth * 0.55 || rect.width <= 0) continue;
+      if (typeof el.click !== 'function') continue;
+      el.scrollIntoView({ block: 'center', behavior: 'instant' });
+      el.click();
+      return t;
+    }
+    return null;
+  }
+  best.scrollIntoView({ block: 'center', behavior: 'instant' });
+  best.click();
+  return _gmbNormalize(best.textContent || '');
+})()
+"""
+
+
 JS_FRAME_HAS_DASHBOARD = "(() => {\n" + _JS_HELPERS_BODY + r"""
   const all = _gmbDeepAll(document);
   const required = [
@@ -444,7 +643,7 @@ JS_FRAME_HAS_DASHBOARD = "(() => {\n" + _JS_HELPERS_BODY + r"""
 """
 
 
-def _wait_for_dashboard_frame(page: Page, attempts: int = 10) -> Frame | None:
+def _wait_for_dashboard_frame(page: Page, attempts: int = 25) -> Frame | None:
     """Poll until the Performance iframe is available."""
     try:
         probe = page.evaluate(JS_PROBE)
@@ -485,16 +684,48 @@ def open_performance_overlay(page: Page) -> Page | None:
     current page (overlay opened in place) or a new tab/popup Google spawned.
     Returns None if the click failed.
     """
+    if _search_is_blocked(page):
+        _log("overlay: skipped — page is Google CAPTCHA / sorry.")
+        return None
     context = page.context
 
     def attempt_click() -> bool:
+        on_google_search = "google.com/search" in (page.url or "")
+        if on_google_search:
+            try:
+                page.evaluate(
+                    """
+                    () => {
+                      const all = document.querySelectorAll('div, section');
+                      for (const el of all) {
+                        const t = (el.innerText || '');
+                        if (t.includes('Votre établissement sur Google')
+                            && t.includes('interactions avec les clients')) {
+                          el.scrollIntoView({ block: 'start', behavior: 'instant' });
+                          return true;
+                        }
+                      }
+                      return false;
+                    }
+                    """
+                )
+                time.sleep(1.0)
+                clicked = page.evaluate(JS_CLICK_OWNER_INTERACTIONS)
+                if clicked:
+                    _log(f"overlay: clicked owner panel link {clicked!r}")
+                    return True
+            except Exception as exc:
+                _log(f"overlay: owner interactions JS failed: {exc}")
         patterns = [
             re.compile(r"\d[\d\s\u00A0]*\s*interactions?\s+avec\s+les\s+clients",
                        re.I),
             re.compile(r"interactions avec les clients", re.I),
-            re.compile(r"Performances?", re.I),
-            re.compile(r"Statistiques", re.I),
         ]
+        if not on_google_search:
+            patterns.extend([
+                re.compile(r"Performances?", re.I),
+                re.compile(r"Statistiques", re.I),
+            ])
         for pattern in patterns:
             try:
                 locator = page.get_by_text(pattern).first
@@ -504,8 +735,10 @@ def open_performance_overlay(page: Page) -> Page | None:
                 return True
             except Exception:
                 continue
-        for label in ("Interactions avec les clients", "Performances",
-                        "Statistiques"):
+        button_labels = ["Interactions avec les clients"]
+        if not on_google_search:
+            button_labels.extend(["Performances", "Statistiques"])
+        for label in button_labels:
             try:
                 page.get_by_role("button", name=label,
                                     exact=False).first.click(timeout=3_000)
@@ -515,13 +748,43 @@ def open_performance_overlay(page: Page) -> Page | None:
                 continue
         return False
 
+    def _wait_performance_ready(target: Page) -> None:
+        for _ in range(40):
+            if not _page_alive(target):
+                return
+            try:
+                url = target.url or ""
+            except Exception:
+                url = ""
+            if "#mpd=" in url or "promote/performance" in url:
+                _log(f"overlay: performance ready ({url[:90]}…)")
+                return
+            try:
+                if target.main_frame.evaluate(JS_FRAME_HAS_DASHBOARD):
+                    _log("overlay: performance tabs visible in page")
+                    return
+            except Exception:
+                pass
+            time.sleep(1.0)
+        _log("overlay: still waiting for performance shell (continuing).")
+
     pages_before = set(context.pages)
     new_page: Page | None = None
     try:
         with context.expect_page(timeout=10_000) as info:
             if not attempt_click():
-                _log("overlay: could not click the entry link.")
-                return None
+                try:
+                    link = page.locator(
+                        "a, button, span, div",
+                    ).filter(has_text=re.compile(
+                        r"interactions?\s+avec\s+les\s+clients", re.I,
+                    )).first
+                    link.scroll_into_view_if_needed(timeout=5_000)
+                    link.click(timeout=8_000, force=True)
+                    _log("overlay: clicked interactions link (fallback locator).")
+                except Exception:
+                    _log("overlay: could not click the entry link.")
+                    return None
         new_page = info.value
     except PlaywrightTimeoutError:
         new_page = None
@@ -531,20 +794,23 @@ def open_performance_overlay(page: Page) -> Page | None:
 
     if new_page is not None and _page_alive(new_page):
         _log(f"overlay: opened in new tab -> {new_page.url}")
+        _wait_performance_ready(new_page)
         _safe_wait_idle(new_page, timeout=25_000)
-        time.sleep(3.0)
+        time.sleep(2.0)
         return new_page
 
     # No popup -- the dashboard probably rendered in place as a modal.
     if not _page_alive(page):
         _log("overlay: original page closed; aborting.")
         return None
+    _wait_performance_ready(page)
     _safe_wait_idle(page, timeout=20_000)
-    time.sleep(3.0)
+    time.sleep(2.0)
     new_pages = [p for p in context.pages if p not in pages_before]
     if new_pages and _page_alive(new_pages[-1]):
         target = new_pages[-1]
         _log(f"overlay: detected new tab after click -> {target.url}")
+        _wait_performance_ready(target)
         _safe_wait_idle(target, timeout=20_000)
         time.sleep(2.0)
         return target
@@ -1319,6 +1585,9 @@ def main() -> int:
         period_end = period_start
 
     project_name = _resolve_project_name(args)
+    project_aliases = _project_name_candidates(args)
+    primary = project_name or (project_aliases[0] if project_aliases else "")
+    alias_only = [a for a in project_aliases if a != primary]
 
     kpis: dict[str, dict[str, str | None]] = {}
     charts: dict[str, str | None] = {}
@@ -1326,35 +1595,161 @@ def main() -> int:
     with sync_playwright() as pw:
         context, browser, page = _launch_browser_context(pw, args, storage_state)
 
+        if args.manual:
+            dash_url = (args.dashboard_url or "").strip() or saved_url
+            start_url = dash_url or GMB_LOCATIONS_URL
+            if not _page_alive(page):
+                page = context.new_page()
+            try:
+                page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
+            except Exception as exc:
+                _log(f"manual: navigation failed: {exc}")
+            _safe_wait_idle(page, timeout=20_000)
+            time.sleep(1.5)
+            print("")
+            print("=== GMB manual capture ===")
+            print("In the opened browser (same Google account as Origincbd):")
+            print("  1) Open the DeepCleaning location / fiche.")
+            print("  2) Open Performance (Interactions avec les clients).")
+            print("  3) Set the report period in the date picker.")
+            print("     Example for 2026-04 report: 25/03/2026 – 25/04/2026.")
+            print("  4) Wait until KPI numbers are visible on screen.")
+            print("Optional: open the public Google Search fiche in another tab")
+            print("for the overview screenshot (business_card).")
+            print("")
+            print("When ready, return here and press ENTER to capture KPIs + PNGs.")
+            print("")
+            input()
+            _persist_session(session_path, context, page)
+            dashboard_page = _pick_dashboard_page(context, page)
+            business_card_out = out_dir / "gmb_business_card.png"
+            charts: dict[str, str | None] = {}
+            kpis: dict[str, dict[str, str | None]] = {}
+            for tab_page in context.pages:
+                if _search_is_blocked(tab_page):
+                    continue
+                url = tab_page.url or ""
+                if "google.com/search" in url and "sorry" not in url:
+                    shot = screenshot_public_fiche(tab_page, business_card_out)
+                    if shot:
+                        charts["business_card"] = shot
+                        break
+            dashboard_frame: Frame | None = None
+            if _page_alive(dashboard_page):
+                dashboard_frame = _wait_for_dashboard_frame(dashboard_page)
+            if dashboard_frame is None:
+                _log("manual: Performance frame not found — check the open tab.")
+            elif not args.manual_skip_period:
+                select_reporting_period(
+                    dashboard_frame, period_start, period_end,
+                    auto_previous=False,
+                )
+            else:
+                _log("manual: keeping your date range (--manual-skip-period).")
+            if dashboard_frame is not None:
+                for tab in TAB_TARGETS:
+                    value, chart = capture_tab(dashboard_frame, tab, out_dir)
+                    kpis[tab["id"]] = {"value": value}
+                    charts[tab["id"]] = chart
+            if args.screenshot and _page_alive(dashboard_page):
+                try:
+                    dashboard_page.screenshot(
+                        path=str(Path(args.screenshot).resolve()),
+                        full_page=True,
+                    )
+                except Exception:
+                    pass
+            final_url = dashboard_page.url if _page_alive(dashboard_page) else ""
+            payload = {
+                "captured_at": _now_iso(),
+                "url": final_url,
+                "project": project_name,
+                "query": project_name,
+                "period_start": period_start,
+                "period_end": period_end,
+                "kpis": kpis,
+                "charts": charts,
+            }
+            if not kpis and out_path.exists():
+                _log("manual: empty kpis; preserving previous gmb_ui.json")
+            else:
+                out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            print(f"Wrote {out_path}")
+            for key, info in kpis.items():
+                value = info.get("value") if isinstance(info, dict) else None
+                print(f"  KPI {key}: {value or '<not found>'}")
+            for key, value in charts.items():
+                print(f"  CARD {key}: {value or '<not found>'}")
+            try:
+                context.close()
+            except Exception:
+                pass
+            if browser is not None:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+            return 0
+
         business_card_out = out_dir / "gmb_business_card.png"
-        search_query = (
+        search_query = "" if args.no_search else (
             _default_query(args.business_name, args.location_name)
             or project_name
         )
         dashboard_page: Page | None = None
         dashboard_frame: Frame | None = None
+        dash_url = (args.dashboard_url or "").strip() or saved_url
 
-        # 1) Google Search → public fiche screenshot (photos, map, rating…).
-        if search_query and open_search(page, search_query):
+        def _capture_from_gmb_app() -> Page | None:
+            if not open_gmb_app(page, dash_url):
+                return None
+            if primary or alias_only:
+                select_gmb_project(page, primary, alias_only)
+            # Origincbd uses Google Search for the public fiche; --no-search clients
+            # stay on business.google.com only (avoids CAPTCHA on a second Search).
+            if not args.no_search:
+                if not charts.get("business_card") and search_query:
+                    if open_search(page, search_query) and not _search_is_blocked(page):
+                        charts["business_card"] = screenshot_public_fiche(
+                            page, business_card_out,
+                        )
+                if charts.get("business_card") is None:
+                    charts["business_card"] = screenshot_public_fiche(
+                        page, business_card_out,
+                    )
+            return open_performance_overlay(page)
+
+        # 0) Direct Performance / Knowledge Panel URL saved at login.
+        if dash_url and "google.com/search" in dash_url and "#mpd=" in dash_url:
+            try:
+                page.goto(dash_url, wait_until="domcontentloaded", timeout=60_000)
+                _safe_wait_idle(page, timeout=25_000)
+                time.sleep(2.0)
+                if not _search_is_blocked(page):
+                    charts["business_card"] = screenshot_public_fiche(
+                        page, business_card_out,
+                    )
+                    dashboard_page = open_performance_overlay(page)
+                    if dashboard_page is None and "#mpd=" in page.url:
+                        dashboard_page = page
+            except Exception as exc:
+                _log(f"dashboard-url: navigation failed: {exc}")
+
+        # A) business.google.com first (when configured).
+        if dashboard_page is None and args.prefer_gmb_app:
+            dashboard_page = _capture_from_gmb_app()
+
+        # B) Google Search → fiche screenshot → « X interactions » (Origincbd).
+        if dashboard_page is None and search_query and open_search(page, search_query):
+            _log("search: capturing public fiche (right panel) before Performance.")
             charts["business_card"] = screenshot_public_fiche(
                 page, business_card_out,
             )
             dashboard_page = open_performance_overlay(page)
 
-        # 2) Fallback: business.google.com → select project → Performance.
-        if dashboard_page is None and open_gmb_app(page, saved_url):
-            if project_name:
-                select_gmb_project(page, project_name)
-            if not charts.get("business_card") and search_query:
-                if open_search(page, search_query):
-                    charts["business_card"] = screenshot_public_fiche(
-                        page, business_card_out,
-                    )
-            if charts.get("business_card") is None:
-                charts["business_card"] = screenshot_public_fiche(
-                    page, business_card_out,
-                )
-            dashboard_page = open_performance_overlay(page)
+        # C) Fallback: business.google.com.
+        if dashboard_page is None and not args.prefer_gmb_app:
+            dashboard_page = _capture_from_gmb_app()
 
         if dashboard_page is not None and _page_alive(dashboard_page):
             dashboard_frame = _wait_for_dashboard_frame(dashboard_page)

@@ -22,7 +22,7 @@ from src.connectors import clarity as clarity_connector  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--client", required=True, help="Client id, e.g. origincbd")
+    parser.add_argument("--client", required=True, help="Client id, e.g. origincbd or deepcleaning")
     args = parser.parse_args()
 
     client = get_client(args.client)

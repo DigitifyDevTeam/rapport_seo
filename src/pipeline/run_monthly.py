@@ -284,6 +284,9 @@ def _build_report_data(client: ClientConfig, period: Period,
         "chart_clarity_popular_pages": clarity_charts.get("popular_pages", ""),
         "chart_clarity_popular_products": clarity_charts.get(
             "popular_products", ""),
+        "clarity_hide_popular_products": bool(
+            (client.clarity or {}).get("pptx_hide_popular_products"),
+        ),
     }
     data.update(_kpi_text(kpis))
     data.update(commentaries)
@@ -360,7 +363,7 @@ def _load_clarity_ui(output_dir: Path) -> dict[str, Any] | None:
 _CLARITY_UI_EXTRACT_SCRIPT = (PROJECT_ROOT / "scripts"
                                 / "clarity_ui_extract.js")
 _CLARITY_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
-_CLARITY_WIDGET_CARDS = (
+_CLARITY_WIDGET_CARDS_DEFAULT = (
     "referrers",
     "devices",
     "popular_pages",
@@ -368,12 +371,18 @@ _CLARITY_WIDGET_CARDS = (
 )
 
 
-def _clarity_capture_complete(output_dir: Path, period: Period) -> bool:
+def _clarity_widget_cards(client: ClientConfig) -> tuple[str, ...]:
+    skip = set((client.clarity or {}).get("ui_skip_widgets") or [])
+    return tuple(c for c in _CLARITY_WIDGET_CARDS_DEFAULT if c not in skip)
+
+
+def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
+                               period: Period) -> bool:
     """True when widget PNGs and ``clarity_ui.json`` match this report period."""
     json_path = output_dir / "clarity_ui.json"
     if not json_path.exists():
         return False
-    for card_id in _CLARITY_WIDGET_CARDS:
+    for card_id in _clarity_widget_cards(client):
         png = output_dir / f"clarity_card_{card_id}.png"
         if not png.exists() or png.stat().st_size < 500:
             return False
@@ -402,11 +411,11 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
 
     session_path = _CLARITY_UI_SESSIONS_DIR / f"clarity-{client.id}.json"
     if not session_path.exists():
-        logger.info(
-            "[clarity-ui] no saved session at %s; run "
-            "`node scripts/clarity_ui_login.js --out %s` once after selecting "
-            "the desired month in the dashboard.",
-            session_path, session_path,
+        logger.warning(
+            "[clarity-ui] no saved session at %s — Clarity slide will show n/a. "
+            "Run once: `node scripts/clients/%s/clarity_ui_login.js` "
+            "(or `node scripts/clarity_ui_login.js --out %s`).",
+            session_path, client.id, session_path,
         )
         return
     if not _CLARITY_UI_EXTRACT_SCRIPT.exists():
@@ -422,7 +431,7 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         return
 
     json_out = output_dir / "clarity_ui.json"
-    if not refresh and _clarity_capture_complete(output_dir, period):
+    if not refresh and _clarity_capture_complete(client, output_dir, period):
         logger.info(
             "[clarity-ui] reusing existing captures in %s (no browser)",
             output_dir,
@@ -442,6 +451,12 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     project_id = ((client.clarity or {}).get("project_id") or "").strip()
     if project_id:
         cmd.extend(["--project-id", project_id])
+    skip_widgets = (client.clarity or {}).get("ui_skip_widgets") or []
+    if skip_widgets:
+        cmd.extend([
+            "--skip-widgets",
+            ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
+        ])
 
     if refresh:
         cmd.extend(["--record", "--show", "--record-timeout", "900"])
@@ -471,7 +486,7 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         return
 
-    if not _clarity_capture_complete(output_dir, period):
+    if not _clarity_capture_complete(client, output_dir, period):
         logger.warning(
             "[clarity-ui] capture finished but widget PNGs are still "
             "missing for %s. Re-run with --refresh-clarity to export "
@@ -689,12 +704,26 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     if "gmb" in skip:
         return False
 
+    gmb_cfg = getattr(client, "gmb", None) or {}
     session_path = _GMB_UI_SESSIONS_DIR / f"gmb-{client.id}.json"
+    if gmb_cfg.get("ui_manual_capture"):
+        existing = _load_gmb_ui(output_dir)
+        if _resolve_gmb_ui_kpis(existing):
+            logger.info(
+                "[gmb-ui] manual capture already present in %s — skipping "
+                "automated browser (run scripts/clients/%s/gmb_ui_capture.py "
+                "to refresh).",
+                output_dir / "gmb_ui.json",
+                client.id,
+            )
+            return True
     if not session_path.exists():
-        logger.info(
-            "[gmb-ui] no saved session at %s; run "
-            "`python %s --out %s --profile %s` once.",
+        logger.warning(
+            "[gmb-ui] no saved session at %s — GMB slides will show n/a. "
+            "Run once: `python scripts/clients/%s/gmb_ui_login.py` "
+            "(or `python %s --out %s --profile %s`).",
             session_path,
+            client.id,
             _GMB_UI_LOGIN_SCRIPT,
             session_path,
             _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb",
@@ -704,7 +733,6 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         logger.warning("[gmb-ui] extract script not found at %s", _GMB_UI_EXTRACT_SCRIPT)
         return False
 
-    gmb_cfg = getattr(client, "gmb", None) or {}
     location_name = (
         gmb_cfg.get("ui_location_name")
         or gmb_cfg.get("location_name")
@@ -718,8 +746,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         or client.name
         or client.id
     )
+    no_search = bool(gmb_cfg.get("ui_no_search"))
     search_query = (
-        gmb_cfg.get("ui_search_query")
+        (gmb_cfg.get("ui_search_query") or "").strip()
+        or ("" if no_search else None)
         or location_name
         or project_name
     )
@@ -735,9 +765,9 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         "--out", str(json_out),
         "--screenshot", str(screenshot),
         "--project-name", project_name,
-        "--business-name", search_query,
-        "--location-name", location_name,
     ]
+    if not no_search:
+        cmd.extend(["--business-name", search_query, "--location-name", location_name])
     if profile_dir.is_dir():
         cmd += ["--profile", str(profile_dir)]
     if period is not None:
@@ -746,6 +776,25 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             "--period-start", period.start.isoformat(),
             "--period-end", period.end.isoformat(),
         ]
+    if no_search:
+        cmd.append("--no-search")
+    if gmb_cfg.get("ui_prefer_gmb_app"):
+        cmd.append("--prefer-gmb-app")
+    aliases = gmb_cfg.get("ui_project_aliases") or []
+    if aliases:
+        cmd.extend([
+            "--project-names",
+            ",".join(str(a).strip() for a in aliases if str(a).strip()),
+        ])
+    if session_path.exists():
+        try:
+            saved = json.loads(
+                session_path.read_text(encoding="utf-8"),
+            ).get("url") or ""
+            if "#mpd=" in str(saved):
+                cmd.extend(["--dashboard-url", str(saved)])
+        except (OSError, json.JSONDecodeError):
+            pass
     logger.info(
         "[gmb-ui] capturing for %s (project=%r, period=%s)",
         client.id,

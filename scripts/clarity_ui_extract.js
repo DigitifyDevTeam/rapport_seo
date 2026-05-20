@@ -16,6 +16,7 @@
  *   node scripts/clarity_ui_extract.js \
  *       --session outputs/_sessions/clarity-origincbd.json \
  *       --out "outputs/origincbd/2026-04/clarity_ui.json" \
+ *   Or use: node scripts/clients/deepcleaning/clarity_ui_extract.js 2026-04
  *       [--record] [--record-timeout 900] \
  *       [--auto] \
  *       [--screenshot "..."] [--period-start ...] [--period-end ...] [--project-id ...] [--show]
@@ -45,12 +46,17 @@ function parseArgs() {
   const auto = has("--auto");
   const record = !auto;
   const recordTimeoutSec = Number(get("--record-timeout") || "900");
+  const skipWidgetsRaw = get("--skip-widgets") || "";
+  const skipWidgets = skipWidgetsRaw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (!session || !out) {
     throw new Error(
       "Usage: --session <path> --out <path> [--record] [--record-timeout 900] "
         + "[--auto] [--url <url>] [--screenshot <path>] "
         + "[--period-start YYYY-MM-DD] [--period-end YYYY-MM-DD] "
-        + "[--project-id <id>] [--show]",
+        + "[--project-id <id>] [--skip-widgets popular_products] [--show]",
     );
   }
   return {
@@ -65,6 +71,7 @@ function parseArgs() {
     auto,
     record,
     recordTimeoutMs: Math.max(60, recordTimeoutSec) * 1000,
+    skipWidgets,
   };
 }
 
@@ -164,7 +171,20 @@ const CARD_FILE_RULES = [
   },
 ];
 
-const RECORD_CARD_IDS = CARD_CAPTURES.map((c) => c.id);
+function resolveCardCaptures(skipWidgetIds) {
+  const skip = new Set(skipWidgetIds || []);
+  return CARD_CAPTURES.filter((c) => !skip.has(c.id)).map((c) => {
+    if (c.id === "popular_pages" && skip.has("popular_products")) {
+      return {
+        id: "popular_pages",
+        anchorTabs: ["Pages supérieures"],
+        activeTab: "Pages supérieures",
+        wideAnchor: true,
+      };
+    }
+    return { ...c };
+  });
+}
 
 const CARD_BOUNDS = {
   minWidth: 300,
@@ -280,27 +300,31 @@ async function applyCustomDateRangeUi(page, periodStart, periodEnd) {
   return applied;
 }
 
-async function findWidgetCardHandle(page, anchorTabs, bounds) {
+async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
+  const wideAnchor = Boolean(options.wideAnchor);
   return page.evaluateHandle(
-    (anchors, limits) => {
+    (anchors, limits, wide) => {
       function norm(t) {
         return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
       const anchorSet = anchors.map((a) => norm(a));
 
-      function isTabSized(rect) {
-        return rect.width > 0 && rect.width <= 260 && rect.height <= 64;
+      function isAnchorSized(rect) {
+        if (wide) {
+          return rect.width > 0 && rect.width <= 420 && rect.height <= 88;
+        }
+        return rect.width > 0 && rect.width <= 320 && rect.height <= 64;
       }
 
       function collectTabElements() {
         const out = [];
         for (const el of document.querySelectorAll("*")) {
           const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
-          if (!raw || raw.length > 45) continue;
+          if (!raw || raw.length > 60) continue;
           const key = norm(raw);
           if (!anchorSet.includes(key)) continue;
           const rect = el.getBoundingClientRect();
-          if (!isTabSized(rect)) continue;
+          if (!isAnchorSized(rect)) continue;
           out.push(el);
         }
         return out;
@@ -343,6 +367,9 @@ async function findWidgetCardHandle(page, anchorTabs, bounds) {
         }
         const primary = anchorSet[0];
         const secondary = anchorSet.slice(1);
+        if (secondary.length === 0) {
+          return found.has(primary);
+        }
         return found.has(primary) && secondary.some((tab) => found.has(tab));
       }
 
@@ -359,22 +386,40 @@ async function findWidgetCardHandle(page, anchorTabs, bounds) {
     },
     anchorTabs,
     bounds,
+    wideAnchor,
   );
 }
 
-async function clickTabOnCard(page, cardHandle, tabLabel) {
+async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options = {}) {
+  for (let step = 0; step < 10; step += 1) {
+    const handle = await findWidgetCardHandle(page, anchorTabs, bounds, options);
+    const card = handle ? handle.asElement() : null;
+    if (card) {
+      return card;
+    }
+    await page.evaluate(() => {
+      window.scrollBy(0, Math.round(window.innerHeight * 0.55));
+    });
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return null;
+}
+
+async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = []) {
+  const labels = [tabLabel, ...altLabels].filter(Boolean);
   return page.evaluate(
-    (card, label) => {
-      const wanted = label.toLowerCase();
+    (card, labelsArg) => {
       function norm(t) {
         return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
+      const wanted = labelsArg.map((l) => norm(l));
       for (const el of card.querySelectorAll("*")) {
         const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
         if (!raw || raw.length > 45) continue;
-        if (norm(raw) !== wanted) continue;
+        const key = norm(raw);
+        if (!wanted.some((w) => key === w)) continue;
         const rect = el.getBoundingClientRect();
-        if (rect.width > 260 || rect.height > 64) continue;
+        if (rect.width > 420 || rect.height > 88) continue;
         el.dispatchEvent(
           new MouseEvent("click", { bubbles: true, cancelable: true }),
         );
@@ -384,7 +429,7 @@ async function clickTabOnCard(page, cardHandle, tabLabel) {
       return false;
     },
     cardHandle,
-    tabLabel,
+    labels,
   );
 }
 
@@ -515,12 +560,12 @@ async function openWidgetOverflowMenu(page, cardHandle) {
 }
 
 async function prepareWidgetCard(page, target) {
-  const cardHandle = await findWidgetCardHandle(
+  const card = await findWidgetCardHandleWithScroll(
     page,
     target.anchorTabs,
     CARD_BOUNDS,
+    { wideAnchor: Boolean(target.wideAnchor) },
   );
-  const card = cardHandle ? cardHandle.asElement() : null;
   if (!card) {
     console.warn(
       `[card:${target.id}] widget not found (tabs: ${target.anchorTabs.join(", ")})`,
@@ -528,7 +573,11 @@ async function prepareWidgetCard(page, target) {
     return null;
   }
 
-  const tabOk = await clickTabOnCard(page, card, target.activeTab);
+  const altTabs =
+    target.id === "popular_pages"
+      ? ["Top pages", "Pages", "Page"]
+      : [];
+  const tabOk = await clickTabOnCard(page, card, target.activeTab, altTabs);
   if (!tabOk) {
     console.warn(`[card:${target.id}] tab not found: ${target.activeTab}`);
   }
@@ -777,6 +826,7 @@ async function runRecordMode({
   outDir,
   charts,
   timeoutMs,
+  targets,
 }) {
   const watchDirs = getDownloadWatchDirs(downloadDir);
   const startedAt = Date.now();
@@ -784,7 +834,8 @@ async function runRecordMode({
   const handledNames = new Set();
   const inProgress = new Set();
   const unknownLogged = new Set();
-  const pending = new Set(RECORD_CARD_IDS);
+  const recordCardIds = (targets || CARD_CAPTURES).map((c) => c.id);
+  const pending = new Set(recordCardIds);
   let lastUnknownPng = null;
   let finished = false;
   let scanning = false;
@@ -794,7 +845,7 @@ async function runRecordMode({
   console.log(`[record] En attente de vos exports (max ${Math.round(timeoutMs / 1000)} s)…`);
 
   function statusLine() {
-    const parts = RECORD_CARD_IDS.map(
+    const parts = recordCardIds.map(
       (id) => `${id}: ${charts[id] ? "OK" : "—"}`,
     );
     return `[record] ${parts.join(" | ")}`;
@@ -932,7 +983,9 @@ async function main() {
     auto,
     record,
     recordTimeoutMs,
+    skipWidgets,
   } = parseArgs();
+  const cardTargets = resolveCardCaptures(skipWidgets);
   const sessionPath = path.resolve(session);
   const outPath = path.resolve(out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -1022,9 +1075,10 @@ async function main() {
       outDir: path.dirname(outPath),
       charts,
       timeoutMs: recordTimeoutMs,
+      targets: cardTargets,
     });
   } else {
-    for (const target of CARD_CAPTURES) {
+    for (const target of cardTargets) {
       const cardOut = path.join(
         path.dirname(outPath),
         `clarity_card_${target.id}.png`,

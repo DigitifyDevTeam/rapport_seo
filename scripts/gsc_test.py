@@ -4,7 +4,7 @@ This script makes 1 API call: sites().list()
 
 Usage:
   python scripts/gsc_test.py --client origincbd
-  python scripts/gsc_test.py --client origincbd --show-all
+  python scripts/gsc_test.py --client deepcleaning --show-all
 """
 
 from __future__ import annotations

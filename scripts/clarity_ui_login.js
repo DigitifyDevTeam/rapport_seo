@@ -12,6 +12,7 @@
  *
  * Usage:
  *   node scripts/clarity_ui_login.js --out outputs/_sessions/clarity-origincbd.json \
+ *   node scripts/clients/deepcleaning/clarity_ui_login.js
  *       [--profile outputs/_sessions/chrome-profile] \
  *       [--chrome "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"]
  */

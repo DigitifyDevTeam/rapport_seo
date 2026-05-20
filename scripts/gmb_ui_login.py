@@ -11,6 +11,7 @@ session file used by ``gmb_ui_extract.py``.
 
 Usage:
   python scripts/gmb_ui_login.py --out outputs/_sessions/gmb-origincbd.json
+  python scripts/clients/deepcleaning/gmb_ui_login.py
 """
 
 from __future__ import annotations
@@ -58,6 +59,11 @@ def main() -> int:
         default="",
         help="Optional location / project name to click (e.g. origincbd.fr).",
     )
+    parser.add_argument(
+        "--client-hint",
+        default="",
+        help="Optional client id for on-screen instructions (e.g. deepcleaning).",
+    )
     args = parser.parse_args()
 
     out_path = Path(args.out).resolve()
@@ -96,12 +102,21 @@ def main() -> int:
                 pass
 
         print("")
-        print("In the opened browser:")
-        print("  1) Sign in to Google.")
-        print("  2) Open the correct location (e.g. Origincbd).")
-        print("  3) Optional: open Performance to verify access.")
-        print("  4) Stay signed in — gmb_ui_extract.py will automate the rest.")
-        print("Then come back here and press ENTER.")
+        hint = (args.client_hint or "").strip().lower()
+        if hint == "deepcleaning":
+            print("In the opened browser (DeepCleaning):")
+            print("  1) Confirm Google sign-in (agency account).")
+            print("  2) Open the DeepCleaning fiche (Search results or Maps).")
+            print("  3) Click « Interactions avec les clients » / Performance.")
+            print("  4) Wait until the Performance dashboard is visible.")
+            print("  5) Press ENTER here — the URL must contain #mpd= (like Origincbd).")
+        else:
+            print("In the opened browser:")
+            print("  1) Sign in to Google.")
+            print("  2) Open the correct location (e.g. Origincbd).")
+            print("  3) Optional: open Performance to verify access.")
+            print("  4) Stay signed in — gmb_ui_extract.py will automate the rest.")
+            print("Then come back here and press ENTER.")
         input()
 
         url = page.url

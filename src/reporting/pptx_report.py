@@ -69,6 +69,10 @@ class ReportBuilder:
 
     def build(self, data: dict[str, Any], output_path: Path) -> Path:
         prs = self._open_presentation()
+        if data.get("clarity_hide_popular_products"):
+            for slide in prs.slides:
+                if self._is_clarity_slide(slide):
+                    self._remove_clarity_popular_products_column(slide)
         for slide in prs.slides:
             self._fill_slide(slide, data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +90,67 @@ class ReportBuilder:
             )
             prs.save(fallback)
             return fallback
+
+    @staticmethod
+    def _is_clarity_slide(slide) -> bool:
+        for shape in slide.shapes:
+            if shape.has_text_frame and "Comportement (Clarity)" in (
+                shape.text_frame.text or ""
+            ):
+                return True
+        return False
+
+    @staticmethod
+    def _remove_clarity_popular_products_column(slide) -> None:
+        """Drop Produits populaires column and widen the 3 remaining chart slots."""
+        clusters: list[list[Any]] = []
+        tolerance = 120_000
+
+        for shape in slide.shapes:
+            if not shape.has_text_frame:
+                continue
+            text = shape.text_frame.text or ""
+            if (
+                "chart_clarity_popular_products" in text
+                or text.strip() == "Produits populaires"
+            ):
+                slide.shapes._spTree.remove(shape._element)  # noqa: SLF001
+                continue
+            if "chart_clarity_" not in text and text.strip() not in (
+                "Appareils", "Référents", "Pages supérieures",
+            ):
+                continue
+            placed = False
+            for cluster in clusters:
+                if abs(cluster[0].left - shape.left) <= tolerance:
+                    cluster.append(shape)
+                    placed = True
+                    break
+            if not placed:
+                clusters.append([shape])
+
+        if not clusters:
+            return
+        clusters.sort(key=lambda group: group[0].left)
+        if len(clusters) < 2:
+            return
+        gap = clusters[1][0].left - (clusters[0][0].left + clusters[0][0].width)
+        if gap < 0:
+            gap = 0
+        left_edge = clusters[0][0].left
+        right_edge = clusters[-1][0].left + clusters[-1][0].width
+        span = right_edge - left_edge
+        n = len(clusters)
+        total_gap = gap * (n - 1)
+        slot_w = int((span - total_gap) / n)
+        for idx, group in enumerate(clusters):
+            new_left = int(left_edge + idx * (slot_w + gap))
+            old_left = group[0].left
+            delta = new_left - old_left
+            for shape in group:
+                shape.left = int(shape.left + delta)
+                if shape.width > 0:
+                    shape.width = slot_w
 
     def _fill_slide(self, slide, data: dict[str, Any]) -> None:
         for shape in tuple(slide.shapes):
