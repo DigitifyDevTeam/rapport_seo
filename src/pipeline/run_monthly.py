@@ -451,20 +451,12 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         timeout = 960
     else:
-        logger.warning(
-            "[clarity-ui] missing Clarity PNGs for %s → %s. "
-            "Run manually:\n"
-            "  node scripts/clarity_ui_extract.js --session %s --out %s "
-            "--period-start %s --period-end %s%s",
-            period,
-            output_dir,
-            session_path,
-            json_out,
-            period.start.isoformat(),
-            period.end.isoformat(),
-            f" --project-id {project_id}" if project_id else "",
+        cmd.append("--auto")
+        logger.info(
+            "[clarity-ui] capturing dashboard for %s → %s (auto mode)",
+            client.id, output_dir,
         )
-        return
+        timeout = 420
 
     try:
         result = subprocess.run(cmd, timeout=timeout, check=False)
@@ -476,6 +468,15 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         logger.warning(
             "[clarity-ui] capture exited with code %d",
             result.returncode,
+        )
+        return
+
+    if not _clarity_capture_complete(output_dir, period):
+        logger.warning(
+            "[clarity-ui] capture finished but widget PNGs are still "
+            "missing for %s. Re-run with --refresh-clarity to export "
+            "manually in the browser.",
+            period,
         )
 
 

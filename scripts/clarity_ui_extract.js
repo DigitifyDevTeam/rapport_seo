@@ -514,7 +514,7 @@ async function openWidgetOverflowMenu(page, cardHandle) {
   }, cardHandle);
 }
 
-async function downloadWidgetPng(page, downloadDir, target, outPath) {
+async function prepareWidgetCard(page, target) {
   const cardHandle = await findWidgetCardHandle(
     page,
     target.anchorTabs,
@@ -542,6 +542,37 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
     /* ignore */
   }
   await new Promise((r) => setTimeout(r, 600));
+  return card;
+}
+
+/** Reliable in headless/auto mode (no PNG download menu). */
+async function screenshotWidgetCard(page, target, outPath) {
+  const card = await prepareWidgetCard(page, target);
+  if (!card) return null;
+  await dismissMenus(page);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  if (fs.existsSync(outPath)) {
+    fs.unlinkSync(outPath);
+  }
+  try {
+    await card.screenshot({ path: outPath });
+  } catch (err) {
+    console.warn(`[card:${target.id}] element screenshot failed: ${err.message}`);
+    return null;
+  }
+  if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 500) {
+    console.warn(`[card:${target.id}] element screenshot empty`);
+    return null;
+  }
+  console.log(`[card:${target.id}] saved via element screenshot → ${outPath}`);
+  return outPath;
+}
+
+async function downloadWidgetPng(page, downloadDir, target, outPath) {
+  const card = await prepareWidgetCard(page, target);
+  if (!card) {
+    return null;
+  }
 
   await dismissMenus(page);
 
@@ -999,12 +1030,7 @@ async function main() {
         `clarity_card_${target.id}.png`,
       );
       try {
-        const written = await downloadWidgetPng(
-          page,
-          downloadDir,
-          target,
-          cardOut,
-        );
+        const written = await screenshotWidgetCard(page, target, cardOut);
         charts[target.id] = written ? path.relative(process.cwd(), written) : null;
       } catch (err) {
         console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
