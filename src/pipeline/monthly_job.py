@@ -14,10 +14,10 @@ from __future__ import annotations
 import argparse
 import logging
 
-from src.config import load_production_clients
+from src.config import env, load_production_clients
 from src.periods import Period
 from src.pipeline.drive_upload import upload_report_artifacts
-from src.pipeline.run_monthly import run_for_client
+from src.pipeline.run_monthly import _set_runtime_skip, run_for_client
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,10 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
+    skip = (env("SEO_REPORT_SKIP_CONNECTORS") or "").strip()
+    if skip:
+        _set_runtime_skip(skip)
+        logger.info("Skipping connectors (SEO_REPORT_SKIP_CONNECTORS): %s", skip)
     return run_scheduled_monthly_job(args.month)
 
 

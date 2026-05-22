@@ -1,0 +1,9 @@
+{
+  "name": "rapport-seo-prerender",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Puppeteer scripts for Microsoft Clarity UI capture",
+  "dependencies": {
+    "puppeteer": "^24.9.0"
+  }
+}
