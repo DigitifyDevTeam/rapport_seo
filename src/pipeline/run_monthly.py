@@ -53,6 +53,9 @@ from src.transform.organic_performance import build_organic_performance_slide
 
 logger = logging.getLogger(__name__)
 
+# Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
+GMB_UI_CAPTURE_VERSION = "calmonth-v2"
+
 
 @dataclass
 class ReportArtifacts:
@@ -643,6 +646,18 @@ def _gmb_ui_assets_ready(output_dir: Path) -> bool:
     return (output_dir / "gmb_card_overview.png").is_file()
 
 
+def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
+    """Reuse only when PNGs/KPIs match this report month and capture logic."""
+    if not _gmb_ui_assets_ready(output_dir):
+        return False
+    gmb_ui = _load_gmb_ui(output_dir) or {}
+    if gmb_ui.get("capture_version") != GMB_UI_CAPTURE_VERSION:
+        return False
+    if gmb_ui.get("report_month") != period.label:
+        return False
+    return True
+
+
 def _gmb_commentary(df: pd.DataFrame,
                     gmb_ui: dict[str, Any] | None = None,
                     kpi_strings: dict[str, str] | None = None) -> str:
@@ -782,14 +797,32 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     session_path = _GMB_UI_SESSIONS_DIR / f"gmb-{client.id}.json"
     logger.info("[gmb-ui] session path=%s  exists=%s",
                 session_path, session_path.exists())
-    if gmb_cfg.get("ui_manual_capture") or _gmb_ui_assets_ready(output_dir):
+    force_refresh = (env("SEO_REPORT_REFRESH_GMB_UI") or "").lower() in (
+        "1", "true", "yes", "on",
+    )
+    if gmb_cfg.get("ui_manual_capture"):
         existing = _load_gmb_ui(output_dir)
         if _resolve_gmb_ui_kpis(existing) or _gmb_ui_assets_ready(output_dir):
             logger.info(
-                "[gmb-ui] using existing UI assets in %s (no browser)",
+                "[gmb-ui] using manual UI assets in %s (no browser)",
                 output_dir,
             )
             return True
+    if period and not force_refresh and _gmb_ui_matches_period(output_dir, period):
+        logger.info(
+            "[gmb-ui] reusing valid captures for %s in %s (no browser)",
+            period.label,
+            output_dir,
+        )
+        return True
+    if force_refresh:
+        logger.info("[gmb-ui] refresh forced (SEO_REPORT_REFRESH_GMB_UI)")
+    elif _gmb_ui_assets_ready(output_dir):
+        logger.info(
+            "[gmb-ui] stale capture in %s — re-running browser for %s",
+            output_dir,
+            period.label if period else "?",
+        )
     if not session_path.exists():
         logger.warning(
             "[gmb-ui] no saved session at %s — KPIs can still come from the "

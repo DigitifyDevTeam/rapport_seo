@@ -67,6 +67,9 @@ TAB_TARGETS: list[dict[str, Any]] = [
                   "Clics vers le site", "Website clicks"]},
 ]
 
+# Bump when capture/date-picker logic changes (forces re-scrape on next run).
+GMB_UI_CAPTURE_VERSION = "calmonth-v2"
+
 DATE_PRESET_LABELS = [
     "Mois précédent", "Mois dernier", "Le mois dernier",
     "Last month", "Previous month",
@@ -1970,13 +1973,20 @@ def main() -> int:
                 except Exception:
                     pass
             final_url = dashboard_page.url if _page_alive(dashboard_page) else ""
+            cal_start, cal_end = _report_calendar_month_bounds(
+                period_end or period_start,
+            )
             payload = {
                 "captured_at": _now_iso(),
+                "capture_version": GMB_UI_CAPTURE_VERSION,
+                "report_month": (cal_end or period_end or "")[:7],
                 "url": final_url,
                 "project": project_name,
                 "query": project_name,
                 "period_start": period_start,
                 "period_end": period_end,
+                "calendar_month_start": cal_start,
+                "calendar_month_end": cal_end,
                 "kpis": kpis,
                 "charts": charts,
             }
@@ -2182,13 +2192,20 @@ def main() -> int:
                     final_url = ""
                 if final_url:
                     break
+        cal_start, cal_end = _report_calendar_month_bounds(
+            period_end or period_start,
+        )
         payload = {
             "captured_at": _now_iso(),
+            "capture_version": GMB_UI_CAPTURE_VERSION,
+            "report_month": (cal_end or period_end or "")[:7],
             "url": final_url,
             "project": project_name,
             "query": project_name,
             "period_start": period_start,
             "period_end": period_end,
+            "calendar_month_start": cal_start,
+            "calendar_month_end": cal_end,
             "kpis": kpis,
             "charts": charts,
         }
