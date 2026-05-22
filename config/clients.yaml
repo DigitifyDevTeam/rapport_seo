@@ -6,6 +6,8 @@
 #   python -m src.pipeline.run_monthly --client example --month 2026-03
 #   python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 #   python -m src.pipeline.run_monthly --client origincbd --month 2026-03
+#   python -m src.pipeline.run_monthly --client digitify --month 2026-04
+#   python -m src.pipeline.run_monthly --client cchabitat --month 2026-04
 
 defaults:
   agency_name: DIGITIFY
@@ -13,6 +15,65 @@ defaults:
   currency: EUR
 
 clients:
+  - id: cchabitat
+    name: CC-Habitat.com
+    website: https://www.cc-habitat.com
+    # GSC + GMB use cchabitat.seo@gmail.com (not the agency OAuth token).
+    google_oauth_account: cchabitat
+    report_profile:
+      client: CC Habitat
+      activity: Habitat, construction & rénovation
+      site_name: CC Habitat
+      url: https://www.cc-habitat.com/
+      seo_pack: Pack PRO +
+      seo_since: "—"
+    ga4:
+      property_id: "339322990"
+      organic_channel: "Organic Search"
+    gsc:
+      site_url: "https://www.cc-habitat.com/"
+    gmb:
+      account_id: ""
+      location_id: ""
+      # Google Search / GBP label (site brand: Concept Confort Habitat).
+      ui_project_name: "Concept Confort Habitat"
+      ui_search_query: "Concept Confort Habitat couvreur Val-de-Marne"
+      ui_project_aliases:
+        - "CC Habitat"
+        - "Concept Confort Habitat"
+    clarity:
+      project_id: "ivgh9to4z7"
+    delivery:
+      emails: []
+
+  - id: digitify
+    name: Digitify.fr
+    website: https://digitify.fr
+    report_profile:
+      client: Digitify
+      activity: Agence web & marketing digital
+      site_name: Digitify
+      url: https://digitify.fr/
+      seo_pack: Pack PRO +
+      seo_since: "—"
+    ga4:
+      property_id: "366533803"
+      organic_channel: "Organic Search"
+    gsc:
+      site_url: "https://digitify.fr/"
+    gmb:
+      account_id: ""
+      location_id: ""
+      ui_project_name: "Digitify"
+      ui_search_query: "Digitify"
+    clarity:
+      project_id: "k23l3ye7zj"
+      ui_skip_widgets:
+        - popular_products
+      pptx_hide_popular_products: true
+    delivery:
+      emails: []
+
   - id: deepcleaning
     name: DeepCleaning.fr
     website: https://deepcleaning.fr

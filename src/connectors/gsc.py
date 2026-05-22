@@ -129,7 +129,12 @@ def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFram
         logger.info("[gsc] no site configured for %s, skipping", client.id)
         return {}
 
-    creds = get_google_credentials(tuple(GSC_SCOPES), oauth_token_suffix="gsc")
+    oauth_account = (client.google_oauth_account or "").strip() or None
+    creds = get_google_credentials(
+        tuple(GSC_SCOPES),
+        oauth_token_suffix="gsc",
+        oauth_account=oauth_account,
+    )
     if creds is None:
         logger.info("[gsc] no Google credentials available, skipping")
         return {}

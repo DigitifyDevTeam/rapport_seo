@@ -34,6 +34,15 @@ or **split** token files per product by setting:
 - ``GOOGLE_OAUTH_TOKEN_FILE_GMB``
 
 Each of those falls back to ``GOOGLE_OAUTH_TOKEN_FILE`` when unset.
+
+Per-client Google accounts (e.g. CC Habitat) set ``google_oauth_account`` in
+``clients.yaml`` and create a token via
+``scripts/clients/<id>/google_oauth_login.py``. The loader checks, in order:
+
+- ``GOOGLE_OAUTH_TOKEN_FILE_{PRODUCT}_{ACCOUNT}`` (e.g. ``..._GSC_CCHABITAT``)
+- ``GOOGLE_OAUTH_TOKEN_FILE_{ACCOUNT}`` (e.g. ``..._CCHABITAT``)
+- then the product-specific and shared paths above.
+
 Optional per-product client secret JSON paths use the same suffix pattern.
 """
 
@@ -85,7 +94,21 @@ def get_service_account_credentials(scopes: tuple[str, ...]):
     )
 
 
-def _oauth_token_path_for(suffix: str | None = None) -> Path | None:
+def _oauth_token_path_for(suffix: str | None = None,
+                          oauth_account: str | None = None) -> Path | None:
+    account_key = (oauth_account or "").strip().upper()
+    if account_key:
+        if suffix:
+            raw = env(f"GOOGLE_OAUTH_TOKEN_FILE_{suffix.upper()}_{account_key}")
+            if raw:
+                path = Path(raw).expanduser()
+                if path.exists():
+                    return path
+        raw = env(f"GOOGLE_OAUTH_TOKEN_FILE_{account_key}")
+        if raw:
+            path = Path(raw).expanduser()
+            if path.exists():
+                return path
     if suffix:
         raw = env(f"GOOGLE_OAUTH_TOKEN_FILE_{suffix.upper()}")
         if raw:
@@ -101,7 +124,15 @@ def _oauth_token_path_for(suffix: str | None = None) -> Path | None:
     return path if path.exists() else None
 
 
-def _oauth_client_secret_path_for(suffix: str | None = None) -> Path | None:
+def _oauth_client_secret_path_for(suffix: str | None = None,
+                                  oauth_account: str | None = None) -> Path | None:
+    account_key = (oauth_account or "").strip().upper()
+    if account_key:
+        raw = env(f"GOOGLE_OAUTH_CLIENT_SECRET_FILE_{account_key}")
+        if raw:
+            path = Path(raw).expanduser()
+            if path.exists():
+                return path
     if suffix:
         raw = env(f"GOOGLE_OAUTH_CLIENT_SECRET_FILE_{suffix.upper()}")
         if raw:
@@ -157,8 +188,9 @@ def _oauth_env_fingerprint(prefix: str | None) -> str:
     return digest
 
 
-def _oauth_token_file_fingerprint(token_suffix: str | None) -> str:
-    path = _oauth_token_path_for(token_suffix)
+def _oauth_token_file_fingerprint(token_suffix: str | None,
+                                  oauth_account: str | None = None) -> str:
+    path = _oauth_token_path_for(token_suffix, oauth_account)
     if path is None or not path.exists():
         return ""
     try:
@@ -167,11 +199,13 @@ def _oauth_token_file_fingerprint(token_suffix: str | None) -> str:
         return ""
 
 
-def _oauth_cache_fingerprint(token_suffix: str | None) -> str:
+def _oauth_cache_fingerprint(token_suffix: str | None,
+                             oauth_account: str | None = None) -> str:
     prefix = _env_prefix_for_suffix(token_suffix)
     env_fp = _oauth_env_fingerprint(prefix) if prefix else ""
-    file_fp = _oauth_token_file_fingerprint(token_suffix)
-    return "|".join(p for p in (env_fp, file_fp) if p)
+    file_fp = _oauth_token_file_fingerprint(token_suffix, oauth_account)
+    acct = (oauth_account or "").strip().lower()
+    return "|".join(p for p in (env_fp, file_fp, acct) if p)
 
 
 def _oauth_expiry_naive_utc(expires_at_raw: str | None, issued_at_raw: str | None,
@@ -277,22 +311,26 @@ def _read_token_file_scopes(token_path: Path) -> list[str]:
     return []
 
 
-def _credentials_from_authorized_user_file(token_path: Path, scopes: tuple[str, ...]):
+def _credentials_from_authorized_user_file(
+    token_path: Path,
+    scopes: tuple[str, ...],
+    *,
+    oauth_account: str | None = None,
+):
     try:
         from google.oauth2.credentials import Credentials
     except ImportError:
         logger.warning("google-auth is not installed")
         return None
 
-    # IMPORTANT: load with the *union* of (already-saved scopes, requested scopes,
-    # the app's full scope union). This guarantees:
-    #   1. The refreshed access_token is valid across every Google API the
-    #      pipeline may call (no more "GA4 connector narrows the token to
-    #      analytics-only and GSC fails with 403 insufficient scopes" the
-    #      next time GSC tries to use it).
-    #   2. We never overwrite the on-disk token file with a narrower scope set.
+    # Agency token: union with ALL_GOOGLE_SCOPES so one refresh works for GA4+GSC+GMB.
+    # Per-client accounts (e.g. cchabitat: GSC+GMB only) must NOT add analytics —
+    # refresh with ungranted scopes raises invalid_scope.
     saved_scopes = _read_token_file_scopes(token_path)
-    union_scopes = sorted(set(saved_scopes) | set(scopes) | set(ALL_GOOGLE_SCOPES))
+    scope_set = set(saved_scopes) | set(scopes)
+    if not (oauth_account or "").strip():
+        scope_set |= set(ALL_GOOGLE_SCOPES)
+    union_scopes = sorted(scope_set)
 
     try:
         creds = Credentials.from_authorized_user_file(str(token_path),
@@ -345,7 +383,8 @@ def _credentials_from_authorized_user_file(token_path: Path, scopes: tuple[str, 
 
 @lru_cache(maxsize=64)
 def get_oauth_credentials(scopes: tuple[str, ...], token_suffix: str | None,
-                          env_fingerprint: str):
+                          env_fingerprint: str,
+                          oauth_account: str | None):
     """Return ``google.oauth2.credentials.Credentials`` or ``None``.
 
     Resolution order:
@@ -353,9 +392,11 @@ def get_oauth_credentials(scopes: tuple[str, ...], token_suffix: str | None,
        per-product override), when the file exists
     2) Playground-style variables in ``.env`` for the product suffix
     """
-    token_path = _oauth_token_path_for(token_suffix)
+    token_path = _oauth_token_path_for(token_suffix, oauth_account)
     if token_path is not None:
-        file_creds = _credentials_from_authorized_user_file(token_path, scopes)
+        file_creds = _credentials_from_authorized_user_file(
+            token_path, scopes, oauth_account=oauth_account,
+        )
         if file_creds is not None:
             return file_creds
 
@@ -370,18 +411,23 @@ def get_oauth_credentials(scopes: tuple[str, ...], token_suffix: str | None,
 
 
 def get_google_credentials(scopes: tuple[str, ...],
-                            *, oauth_token_suffix: str | None = None):
+                            *, oauth_token_suffix: str | None = None,
+                            oauth_account: str | None = None):
     """Return Google credentials for the requested scopes or ``None``.
 
     Preference order:
     1) service account credentials
     2) OAuth authorized-user credentials
+
+    *oauth_account*: client-specific account id from ``clients.yaml``
+    (``google_oauth_account``), e.g. ``cchabitat``.
     """
     creds = get_service_account_credentials(scopes)
     if creds is not None:
         return creds
-    fp = _oauth_cache_fingerprint(oauth_token_suffix)
-    return get_oauth_credentials(scopes, oauth_token_suffix, fp)
+    account = (oauth_account or "").strip() or None
+    fp = _oauth_cache_fingerprint(oauth_token_suffix, account)
+    return get_oauth_credentials(scopes, oauth_token_suffix, fp, account)
 
 
 def oauth_bootstrap_hint() -> dict[str, str]:

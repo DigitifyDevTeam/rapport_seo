@@ -103,21 +103,30 @@ def main() -> int:
 
         print("")
         hint = (args.client_hint or "").strip().lower()
-        if hint == "deepcleaning":
-            print("In the opened browser (DeepCleaning):")
-            print("  1) Confirm Google sign-in (agency account).")
-            print("  2) Open the DeepCleaning fiche (Search results or Maps).")
-            print("  3) Click « Interactions avec les clients » / Performance.")
-            print("  4) Wait until the Performance dashboard is visible.")
-            print("  5) Press ENTER here — the URL must contain #mpd= (like Origincbd).")
+        if hint in ("deepcleaning", "cchabitat"):
+            label = "CC Habitat (cchabitat.seo@gmail.com)" if hint == "cchabitat" else "DeepCleaning"
+            print(f"In the opened browser ({label}):")
+            print("  1) Confirm Google sign-in with the correct account.")
+            print("  2) On the Search fiche, find « Votre établissement sur Google ».")
+            print("  3) Click « XXX interactions avec les clients » (not the website link).")
+            print("  4) Wait until Performance opens (Vue d'ensemble, Appels, …).")
+            print("  5) Press ENTER here only when the address bar contains #mpd=.")
         else:
             print("In the opened browser:")
             print("  1) Sign in to Google.")
             print("  2) Open the correct location (e.g. Origincbd).")
-            print("  3) Optional: open Performance to verify access.")
+            print("  3) Open Performance — URL must contain #mpd= before you continue.")
             print("  4) Stay signed in — gmb_ui_extract.py will automate the rest.")
-            print("Then come back here and press ENTER.")
-        input()
+        while True:
+            input("Press ENTER when Performance is visible: ")
+            url = page.url
+            if "#mpd=" in url or "promote/performance" in url:
+                break
+            print(
+                "The current URL does not contain #mpd= (Performance not saved).\n"
+                f"  Current: {url[:120]}\n"
+                "  Click « interactions avec les clients » on the owner panel, then press ENTER again.",
+            )
 
         url = page.url
         storage_state = context.storage_state()

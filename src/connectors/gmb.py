@@ -40,7 +40,12 @@ TIMEOUT = 30
 
 
 def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFrame]:
-    creds = get_google_credentials(tuple(GMB_SCOPES), oauth_token_suffix="gmb")
+    oauth_account = (client.google_oauth_account or "").strip() or None
+    creds = get_google_credentials(
+        tuple(GMB_SCOPES),
+        oauth_token_suffix="gmb",
+        oauth_account=oauth_account,
+    )
     if creds is None:
         logger.info("[gmb] no Google credentials available, skipping")
         return {}

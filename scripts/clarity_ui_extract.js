@@ -134,8 +134,11 @@ const KPI_LABELS = {
 const CARD_CAPTURES = [
   {
     id: "referrers",
-    anchorTabs: ["Référent", "Canal", "Campagne", "Source"],
+    anchorTabs: ["Référent", "Référents", "Canal", "Campagne"],
     activeTab: "Référent",
+    altActiveTabs: ["Référents"],
+    matchMode: "referrers",
+    rejectPromo: true,
   },
   {
     id: "devices",
@@ -146,11 +149,16 @@ const CARD_CAPTURES = [
     id: "popular_pages",
     anchorTabs: ["Pages supérieures", "Produits populaires"],
     activeTab: "Pages supérieures",
+    sharedWidget: "pages_products",
+    tabIndex: 0,
   },
   {
     id: "popular_products",
     anchorTabs: ["Pages supérieures", "Produits populaires"],
     activeTab: "Produits populaires",
+    altActiveTabs: ["Popular products", "Top products"],
+    sharedWidget: "pages_products",
+    tabIndex: 1,
   },
 ];
 
@@ -302,12 +310,16 @@ async function applyCustomDateRangeUi(page, periodStart, periodEnd) {
 
 async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
   const wideAnchor = Boolean(options.wideAnchor);
+  const matchMode = options.matchMode || "default";
+  const rejectPromo = Boolean(options.rejectPromo);
   return page.evaluateHandle(
-    (anchors, limits, wide) => {
+    (anchors, limits, wide, mode, skipPromo) => {
       function norm(t) {
         return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
       const anchorSet = anchors.map((a) => norm(a));
+      const promoRe =
+        /flutter|désormais disponible|disponible pour les applications/i;
 
       function isAnchorSized(rect) {
         if (wide) {
@@ -357,13 +369,22 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
         return best;
       }
 
-      function cardContainsAnchors(card) {
+      function tabsFoundOnCard(card) {
         const found = new Set();
         for (const el of card.querySelectorAll("*")) {
           const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
           if (!raw || raw.length > 45) continue;
           const key = norm(raw);
           if (anchorSet.includes(key)) found.add(key);
+        }
+        return found;
+      }
+
+      function cardContainsAnchors(card) {
+        const found = tabsFoundOnCard(card);
+        if (mode === "referrers") {
+          const hasRef = found.has("référent") || found.has("référents");
+          return hasRef && found.has("canal") && found.has("campagne");
         }
         const primary = anchorSet[0];
         const secondary = anchorSet.slice(1);
@@ -373,24 +394,49 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
         return found.has(primary) && secondary.some((tab) => found.has(tab));
       }
 
+      function cardLooksLikePromo(card) {
+        if (!skipPromo) return false;
+        const text = (card.innerText || "").slice(0, 2500);
+        return promoRe.test(text);
+      }
+
+      function cardPosition(card) {
+        const r = card.getBoundingClientRect();
+        return { top: r.top, left: r.left };
+      }
+
       const seen = new Set();
+      const matches = [];
       for (const tabEl of collectTabElements()) {
         const card = smallestCardFromTab(tabEl);
         if (!card || seen.has(card)) continue;
         seen.add(card);
-        if (cardContainsAnchors(card)) {
-          return card;
-        }
+        if (!cardContainsAnchors(card)) continue;
+        if (cardLooksLikePromo(card)) continue;
+        matches.push(card);
       }
-      return null;
+      if (!matches.length) return null;
+      matches.sort((a, b) => {
+        const pa = cardPosition(a);
+        const pb = cardPosition(b);
+        if (pa.top !== pb.top) return pa.top - pb.top;
+        return pa.left - pb.left;
+      });
+      return matches[0];
     },
     anchorTabs,
     bounds,
     wideAnchor,
+    matchMode,
+    rejectPromo,
   );
 }
 
 async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options = {}) {
+  if (options.scrollToTopFirst) {
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await new Promise((r) => setTimeout(r, 400));
+  }
   for (let step = 0; step < 10; step += 1) {
     const handle = await findWidgetCardHandle(page, anchorTabs, bounds, options);
     const card = handle ? handle.asElement() : null;
@@ -405,32 +451,181 @@ async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options 
   return null;
 }
 
+function tabLabelsForTarget(target) {
+  const primary = [target.activeTab, ...(target.altActiveTabs || [])].filter(Boolean);
+  if (target.id === "popular_pages") {
+    return [...primary, "Top pages", "Pages", "Page"];
+  }
+  if (target.id === "popular_products") {
+    return [...primary, "Popular products", "Top products"];
+  }
+  if (target.id === "referrers") {
+    return [...primary, "Référents", "Referrer", "Referrers"];
+  }
+  return primary;
+}
+
+async function clickTabByIndexOnCard(page, cardHandle, tabIndex) {
+  const tabRect = await cardHandle.evaluate((card, index) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    const allowed = new Set([
+      "pages supérieures",
+      "produits populaires",
+      "top pages",
+      "popular products",
+    ]);
+    const cardRect = card.getBoundingClientRect();
+    const tabs = [];
+    for (const el of card.querySelectorAll('[role="tab"], button, a, span, div')) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 40) continue;
+      const key = norm(raw);
+      if (!allowed.has(key)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.top - cardRect.top > 72) continue;
+      if (rect.width > 280 || rect.height > 56) continue;
+      tabs.push({
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        left: rect.left,
+        key,
+      });
+    }
+    const deduped = [];
+    const seen = new Set();
+    tabs.sort((a, b) => a.left - b.left);
+    for (const tab of tabs) {
+      if (seen.has(tab.key)) continue;
+      seen.add(tab.key);
+      deduped.push(tab);
+    }
+    return deduped[index] || null;
+  }, tabIndex);
+  if (!tabRect) return false;
+  await page.mouse.click(tabRect.x, tabRect.y);
+  return true;
+}
+
 async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = []) {
   const labels = [tabLabel, ...altLabels].filter(Boolean);
-  return page.evaluate(
+  const tabRect = await cardHandle.evaluate((card, labelsArg) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    function labelMatches(key, wanted) {
+      return wanted.some(
+        (w) => key === w || key.includes(w) || w.includes(key),
+      );
+    }
+    const wanted = labelsArg.map((l) => norm(l));
+    const cardRect = card.getBoundingClientRect();
+
+    const tabCandidates = [];
+    for (const el of card.querySelectorAll(
+      '[role="tab"], button, a, span, div, p',
+    )) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 45) continue;
+      const key = norm(raw);
+      if (!labelMatches(key, wanted)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.width > 420 || rect.height > 88) continue;
+      if (rect.top - cardRect.top > 110) continue;
+      const role = (el.getAttribute("role") || "").toLowerCase();
+      tabCandidates.push({
+        x: rect.x + rect.width / 2,
+        y: rect.y + rect.height / 2,
+        area: rect.width * rect.height,
+        isTab: role === "tab",
+      });
+    }
+    tabCandidates.sort((a, b) => {
+      if (a.isTab !== b.isTab) return a.isTab ? -1 : 1;
+      return a.area - b.area;
+    });
+    return tabCandidates[0] || null;
+  }, labels);
+
+  if (!tabRect) return false;
+
+  await page.mouse.click(tabRect.x, tabRect.y);
+  await cardHandle.evaluate((card, point) => {
+    const el = document.elementFromPoint(point.x, point.y);
+    if (!el || !card.contains(el)) return;
+    el.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    el.click();
+  }, { x: tabRect.x, y: tabRect.y });
+  return true;
+}
+
+async function isTabActiveOnCard(page, cardHandle, tabLabel, altLabels = []) {
+  const labels = [tabLabel, ...altLabels].filter(Boolean);
+  return cardHandle.evaluate(
     (card, labelsArg) => {
       function norm(t) {
         return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
+      function labelMatches(key, wanted) {
+        return wanted.some(
+          (w) => key === w || key.includes(w) || w.includes(key),
+        );
+      }
       const wanted = labelsArg.map((l) => norm(l));
-      for (const el of card.querySelectorAll("*")) {
+      const cardRect = card.getBoundingClientRect();
+
+      function nodeSelected(el) {
+        if (el.getAttribute("aria-selected") === "true") return true;
+        if (el.getAttribute("aria-current") === "page") return true;
+        const cls = (el.className || "").toString().toLowerCase();
+        if (
+          cls.includes("active") ||
+          cls.includes("selected") ||
+          cls.includes("is-selected")
+        ) {
+          return true;
+        }
+        let p = el.parentElement;
+        for (let i = 0; i < 3 && p; i += 1) {
+          if (p.getAttribute("aria-selected") === "true") return true;
+          const pcls = (p.className || "").toString().toLowerCase();
+          if (pcls.includes("active") || pcls.includes("selected")) return true;
+          p = p.parentElement;
+        }
+        return false;
+      }
+
+      for (const el of card.querySelectorAll(
+        '[role="tab"], button, a, span, div',
+      )) {
         const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
         if (!raw || raw.length > 45) continue;
         const key = norm(raw);
-        if (!wanted.some((w) => key === w)) continue;
+        if (!labelMatches(key, wanted)) continue;
         const rect = el.getBoundingClientRect();
-        if (rect.width > 420 || rect.height > 88) continue;
-        el.dispatchEvent(
-          new MouseEvent("click", { bubbles: true, cancelable: true }),
-        );
-        el.click();
-        return true;
+        if (rect.top - cardRect.top > 110) continue;
+        if (nodeSelected(el)) return true;
       }
       return false;
     },
-    cardHandle,
     labels,
   );
+}
+
+async function waitForTabOnCard(page, cardHandle, tabLabel, altLabels = [], timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await isTabActiveOnCard(page, cardHandle, tabLabel, altLabels)) {
+      return true;
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
 }
 
 function listPngFiles(dir) {
@@ -559,13 +754,24 @@ async function openWidgetOverflowMenu(page, cardHandle) {
   }, cardHandle);
 }
 
-async function prepareWidgetCard(page, target) {
-  const card = await findWidgetCardHandleWithScroll(
-    page,
-    target.anchorTabs,
-    CARD_BOUNDS,
-    { wideAnchor: Boolean(target.wideAnchor) },
-  );
+function widgetFindOptions(target) {
+  return {
+    wideAnchor: Boolean(target.wideAnchor),
+    matchMode: target.matchMode || "default",
+    rejectPromo: Boolean(target.rejectPromo),
+    scrollToTopFirst: target.id === "referrers",
+  };
+}
+
+async function prepareWidgetCard(page, target, existingCard = null) {
+  const card =
+    existingCard ||
+    (await findWidgetCardHandleWithScroll(
+      page,
+      target.anchorTabs,
+      CARD_BOUNDS,
+      widgetFindOptions(target),
+    ));
   if (!card) {
     console.warn(
       `[card:${target.id}] widget not found (tabs: ${target.anchorTabs.join(", ")})`,
@@ -573,16 +779,71 @@ async function prepareWidgetCard(page, target) {
     return null;
   }
 
-  const altTabs =
-    target.id === "popular_pages"
-      ? ["Top pages", "Pages", "Page"]
-      : [];
-  const tabOk = await clickTabOnCard(page, card, target.activeTab, altTabs);
+  const tabLabels = tabLabelsForTarget(target);
+  const altOnly = tabLabels.slice(1);
+  let tabOk = false;
+  const maxAttempts = target.id === "popular_products" ? 4 : 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (typeof target.tabIndex === "number") {
+      tabOk = await clickTabByIndexOnCard(page, card, target.tabIndex);
+    }
+    if (!tabOk) {
+      tabOk = await clickTabOnCard(page, card, target.activeTab, altOnly);
+    }
+    if (!tabOk) break;
+    await new Promise((r) => setTimeout(r, 1200));
+    const active = await isTabActiveOnCard(
+      page,
+      card,
+      target.activeTab,
+      altOnly,
+    );
+    if (active) break;
+    if (target.id === "popular_products") {
+      const pagesStill = await isTabActiveOnCard(
+        page,
+        card,
+        "Pages supérieures",
+        ["Top pages"],
+      );
+      if (!pagesStill) break;
+    }
+  }
   if (!tabOk) {
     console.warn(`[card:${target.id}] tab not found: ${target.activeTab}`);
+  } else {
+    const active = await waitForTabOnCard(
+      page,
+      card,
+      target.activeTab,
+      altOnly,
+      target.id === "popular_products" ? 10000 : 8000,
+    );
+    if (!active) {
+      console.warn(
+        `[card:${target.id}] tab not active after click: ${target.activeTab}`,
+      );
+    }
   }
 
-  await new Promise((r) => setTimeout(r, 2000));
+  await new Promise((r) => setTimeout(r, target.id === "popular_products" ? 3500 : 2500));
+
+  if (target.id === "popular_products") {
+    const productsActive = await isTabActiveOnCard(
+      page,
+      card,
+      "Produits populaires",
+      ["Popular products", "Top products"],
+    );
+    if (!productsActive) {
+      console.warn(
+        "[card:popular_products] forcing tab index 1 (Produits populaires)",
+      );
+      await clickTabByIndexOnCard(page, card, 1);
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+
   try {
     await card.evaluate((el) => {
       el.scrollIntoView({ behavior: "instant", block: "center" });
@@ -594,9 +855,7 @@ async function prepareWidgetCard(page, target) {
   return card;
 }
 
-/** Reliable in headless/auto mode (no PNG download menu). */
-async function screenshotWidgetCard(page, target, outPath) {
-  const card = await prepareWidgetCard(page, target);
+async function screenshotPreparedCard(page, target, card, outPath) {
   if (!card) return null;
   await dismissMenus(page);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
@@ -615,6 +874,87 @@ async function screenshotWidgetCard(page, target, outPath) {
   }
   console.log(`[card:${target.id}] saved via element screenshot → ${outPath}`);
   return outPath;
+}
+
+/** Pages supérieures + Produits populaires share one widget — capture both tabs on the same card. */
+async function captureSharedTabWidgets(page, targets, outDir) {
+  const sample = targets[0];
+  const card = await findWidgetCardHandleWithScroll(
+    page,
+    sample.anchorTabs,
+    CARD_BOUNDS,
+    widgetFindOptions(sample),
+  );
+  if (!card) {
+    for (const target of targets) {
+      console.warn(
+        `[card:${target.id}] widget not found (tabs: ${sample.anchorTabs.join(", ")})`,
+      );
+    }
+    return {};
+  }
+
+  const results = {};
+  for (const target of targets) {
+    const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
+    try {
+      const prepared = await prepareWidgetCard(page, target, card);
+      const written = await screenshotPreparedCard(page, target, prepared, cardOut);
+      results[target.id] = written
+        ? path.relative(process.cwd(), written)
+        : null;
+    } catch (err) {
+      console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
+      results[target.id] = null;
+    }
+  }
+  return results;
+}
+
+/** Reliable in headless/auto mode (no PNG download menu). */
+async function screenshotWidgetCard(page, target, outPath) {
+  const card = await prepareWidgetCard(page, target);
+  if (!card) return null;
+  return screenshotPreparedCard(page, target, card, outPath);
+}
+
+async function captureAutoWidgetCards(page, cardTargets, outDir) {
+  const charts = {};
+  const sharedGroups = new Map();
+  const standalone = [];
+
+  for (const target of cardTargets) {
+    if (target.sharedWidget) {
+      if (!sharedGroups.has(target.sharedWidget)) {
+        sharedGroups.set(target.sharedWidget, []);
+      }
+      sharedGroups.get(target.sharedWidget).push(target);
+    } else {
+      standalone.push(target);
+    }
+  }
+
+  for (const targets of sharedGroups.values()) {
+    const order = ["popular_pages", "popular_products"];
+    targets.sort(
+      (a, b) => order.indexOf(a.id) - order.indexOf(b.id),
+    );
+    const batch = await captureSharedTabWidgets(page, targets, outDir);
+    Object.assign(charts, batch);
+  }
+
+  for (const target of standalone) {
+    const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
+    try {
+      const written = await screenshotWidgetCard(page, target, cardOut);
+      charts[target.id] = written ? path.relative(process.cwd(), written) : null;
+    } catch (err) {
+      console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
+      charts[target.id] = null;
+    }
+  }
+
+  return charts;
 }
 
 async function downloadWidgetPng(page, downloadDir, target, outPath) {
@@ -1078,19 +1418,12 @@ async function main() {
       targets: cardTargets,
     });
   } else {
-    for (const target of cardTargets) {
-      const cardOut = path.join(
-        path.dirname(outPath),
-        `clarity_card_${target.id}.png`,
-      );
-      try {
-        const written = await screenshotWidgetCard(page, target, cardOut);
-        charts[target.id] = written ? path.relative(process.cwd(), written) : null;
-      } catch (err) {
-        console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
-        charts[target.id] = null;
-      }
-    }
+    const autoCharts = await captureAutoWidgetCards(
+      page,
+      cardTargets,
+      path.dirname(outPath),
+    );
+    Object.assign(charts, autoCharts);
   }
 
   const payload = {

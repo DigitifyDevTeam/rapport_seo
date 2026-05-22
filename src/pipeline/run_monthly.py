@@ -675,6 +675,14 @@ _GMB_UI_LOGIN_SCRIPT = PROJECT_ROOT / "scripts" / "gmb_ui_login.py"
 _GMB_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 
 
+def _gmb_ui_profile_dir(client: ClientConfig) -> Path:
+    """Chrome user-data dir for GMB UI (isolated per ``google_oauth_account``)."""
+    account = (client.google_oauth_account or "").strip()
+    if account:
+        return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{account}"
+    return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
+
+
 def _backup_gmb_ui_if_good(json_path: Path) -> None:
     """Save a .bak copy if the current file has non-empty kpis."""
     data = _read_json_safe(json_path)
@@ -726,7 +734,7 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             client.id,
             _GMB_UI_LOGIN_SCRIPT,
             session_path,
-            _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb",
+            _gmb_ui_profile_dir(client),
         )
         return False
     if not _GMB_UI_EXTRACT_SCRIPT.exists():
@@ -753,7 +761,7 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         or location_name
         or project_name
     )
-    profile_dir = _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
+    profile_dir = _gmb_ui_profile_dir(client)
 
     json_out = output_dir / "gmb_ui.json"
     _backup_gmb_ui_if_good(json_out)

@@ -276,6 +276,8 @@ def open_gmb_app(page: Page, start_url: str = "") -> bool:
 
 
 def _try_select_project_label(page: Page, project_name: str) -> bool:
+    if "business.google.com" not in (page.url or ""):
+        return False
     escaped = re.escape(project_name)
     patterns = [
         re.compile(escaped, re.I),
@@ -283,7 +285,22 @@ def _try_select_project_label(page: Page, project_name: str) -> bool:
     ]
     for pattern in patterns:
         try:
+            loc = page.get_by_role("row").filter(has_text=pattern).first
+            loc.scroll_into_view_if_needed(timeout=3_000)
+            loc.click(timeout=8_000)
+            _log(f"project: selected row {project_name!r}")
+            _safe_wait_idle(page, timeout=20_000)
+            time.sleep(2.0)
+            return True
+        except Exception:
+            pass
+        try:
             loc = page.get_by_text(pattern).first
+            href = loc.evaluate(
+                "el => (el.closest('a') && el.closest('a').href) || ''",
+            )
+            if href and href.startswith("http") and "business.google.com" not in href:
+                continue
             loc.scroll_into_view_if_needed(timeout=3_000)
             loc.click(timeout=8_000)
             _log(f"project: selected {project_name!r}")
@@ -307,10 +324,17 @@ JS_SELECT_BY_KEYWORDS = r"""
 (keywords) => {
   const kws = (keywords || []).map(k => String(k).toLowerCase()).filter(k => k.length >= 3);
   if (!kws.length) return null;
+  function isExternalSiteLink(el) {
+    if (!el || el.tagName !== 'A') return false;
+    const h = (el.getAttribute('href') || '').trim();
+    if (!h.startsWith('http')) return false;
+    return !h.includes('business.google.com') && !h.includes('google.com/');
+  }
   const nodes = document.querySelectorAll(
-    'a, button, [role="row"], [role="listitem"], div, span'
+    '[role="row"], [role="listitem"], a, button, div, span'
   );
   for (const el of nodes) {
+    if (isExternalSiteLink(el)) continue;
     const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
     if (!t || t.length > 140) continue;
     const low = t.toLowerCase();
@@ -350,6 +374,9 @@ def select_gmb_project(page: Page, project_name: str,
             token = token.strip().lower()
             if len(token) >= 4 and token not in keywords:
                 keywords.append(token)
+    if "business.google.com" not in (page.url or ""):
+        _log(f"project: could not find any of {names!r} on the page.")
+        return False
     try:
         picked = page.evaluate(JS_SELECT_BY_KEYWORDS, keywords)
         if picked:
@@ -364,9 +391,46 @@ def select_gmb_project(page: Page, project_name: str,
     return False
 
 
-def screenshot_public_fiche(page: Page, out_path: Path) -> str | None:
+def _ensure_on_gmb_app(page: Page) -> bool:
+    """Return False if navigation left business.google.com (e.g. website link)."""
+    url = page.url or ""
+    if "business.google.com" in url:
+        return True
+    _log(f"project: left GBP app ({url[:80]}), returning to locations list.")
+    return open_gmb_app(page)
+
+
+def _ensure_search_page_for_fiche(page: Page, search_query: str) -> bool:
+    """Load a clean Google Search results page (no Performance overlay)."""
+    url = page.url or ""
+    if (
+        search_query
+        and ("#mpd=" in url or "promote/performance" in url or "business.google.com" in url)
+    ):
+        return open_search(page, search_query)
+    if "google.com/search" in url and "#mpd=" in url:
+        clean = url.split("#", 1)[0]
+        try:
+            page.goto(clean, wait_until="domcontentloaded", timeout=60_000)
+            _safe_wait_idle(page, timeout=20_000)
+            time.sleep(2.0)
+            return not _search_is_blocked(page)
+        except Exception as exc:
+            _log(f"public fiche: could not strip #mpd= from URL: {exc}")
+    return "google.com/search" in (page.url or "") and "#mpd=" not in (page.url or "")
+
+
+def screenshot_public_fiche(
+    page: Page,
+    out_path: Path,
+    *,
+    search_query: str = "",
+) -> str | None:
     """Screenshot the public GBP fiche on Google Search (not the owner dashboard)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _ensure_search_page_for_fiche(page, search_query):
+        _log("public fiche: not on a clean Search page.")
+        return None
     try:
         clip = page.evaluate(KNOWLEDGE_PANEL_CLIP_JS)
     except Exception as exc:
@@ -374,6 +438,9 @@ def screenshot_public_fiche(page: Page, out_path: Path) -> str | None:
         clip = None
     if not clip:
         _log("public fiche: knowledge panel not found on search page.")
+        return None
+    if clip.get("width", 0) < 280:
+        _log(f"public fiche: clip too narrow ({clip.get('width')}), skipping.")
         return None
     try:
         page.screenshot(path=str(out_path), clip=clip)
@@ -398,14 +465,18 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
     'Compléter les infos',
     'Voir les avis',
   ];
-  const publicSignals = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web/i;
+  const performanceMarkers =
+    /Rendez-vous:|Envoyer sur votre|Recevez plus d'avis|Ajouter une photo|Vue d.ensemble|Performances?/i;
+  const publicSignals = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web|Appeler|Avis ·/i;
 
   function clipFromRoot(root) {
     if (!root) return null;
     const rootRect = root.getBoundingClientRect();
-    if (rootRect.width < 220 || rootRect.height < 200) return null;
+    if (rootRect.width < 280 || rootRect.height < 200) return null;
     const text = (root.innerText || '');
-    if (!publicSignals.test(text) && !root.querySelector('img')) return null;
+    if (performanceMarkers.test(text)) return null;
+    const hits = (text.match(publicSignals) || []).length;
+    if (hits < 1 && !root.querySelector('img')) return null;
 
     let cutY = rootRect.bottom;
     for (const el of root.querySelectorAll('*')) {
@@ -432,12 +503,18 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
 
     const height = cutY - topY;
     if (height < 260) return null;
+    const w = Math.min(rootRect.width, window.innerWidth - rootRect.left);
+    if (w < 280) return null;
     return {
       x: Math.max(0, rootRect.left),
       y: Math.max(0, topY),
-      width: rootRect.width,
+      width: w,
       height: Math.min(height, window.innerHeight - topY),
     };
+  }
+
+  if (!location.href.includes('google.com/search') || location.href.includes('#mpd=')) {
+    return null;
   }
 
   const rhs = document.querySelector('#rhs');
@@ -615,6 +692,27 @@ JS_CLICK_OWNER_INTERACTIONS = "(() => {\n" + _JS_HELPERS_BODY + r"""
       el.click();
       return t;
     }
+    let kpBest = null;
+    let kpArea = Infinity;
+    for (const el of document.querySelectorAll(
+      'a, button, [role="link"], [role="button"], span, div')) {
+      const t = _gmbNormalize(el.textContent || el.innerText || '');
+      if (!re.test(t) || t.length > 120) continue;
+      if (typeof el.click !== 'function') continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (rect.left < window.innerWidth * 0.32) continue;
+      const area = rect.width * rect.height;
+      if (area < kpArea) {
+        kpBest = el;
+        kpArea = area;
+      }
+    }
+    if (kpBest) {
+      kpBest.scrollIntoView({ block: 'center', behavior: 'instant' });
+      kpBest.click();
+      return _gmbNormalize(kpBest.textContent || '');
+    }
     return null;
   }
   best.scrollIntoView({ block: 'center', behavior: 'instant' });
@@ -642,6 +740,31 @@ JS_FRAME_HAS_DASHBOARD = "(() => {\n" + _JS_HELPERS_BODY + r"""
 })()
 """
 
+JS_FRAME_HAS_DASHBOARD_RELAXED = "(() => {\n" + _JS_HELPERS_BODY + r"""
+  const all = _gmbDeepAll(document);
+  const required = [/Vue d['\u2019]ensemble/, /Appels/];
+  for (const el of all) {
+    const t = _gmbNormalize(el.textContent);
+    if (t.length < 30 || t.length > 12000) continue;
+    if (required.every((re) => re.test(t))) return true;
+  }
+  return false;
+})()
+"""
+
+JS_CLICK_MPD_LINK = "(() => {\n" + _JS_HELPERS_BODY + r"""
+  for (const a of document.querySelectorAll('a[href]')) {
+    const h = a.href || '';
+    if (h.includes('#mpd=') || h.includes('promote/performance')) {
+      a.scrollIntoView({ block: 'center', behavior: 'instant' });
+      a.click();
+      return h;
+    }
+  }
+  return null;
+})()
+"""
+
 
 def _wait_for_dashboard_frame(page: Page, attempts: int = 25) -> Frame | None:
     """Poll until the Performance iframe is available."""
@@ -658,23 +781,82 @@ def _wait_for_dashboard_frame(page: Page, attempts: int = 25) -> Frame | None:
     return None
 
 
+def _frame_has_dashboard(frame: Frame, *, relaxed: bool = False) -> bool:
+    script = JS_FRAME_HAS_DASHBOARD_RELAXED if relaxed else JS_FRAME_HAS_DASHBOARD
+    try:
+        return bool(frame.evaluate(script))
+    except Exception:
+        return False
+
+
 def find_dashboard_frame(page: Page) -> Frame | None:
     """Locate the iframe whose document hosts the Performance dashboard."""
     for frame in page.frames:
         if frame == page.main_frame:
             continue
-        try:
-            if frame.evaluate(JS_FRAME_HAS_DASHBOARD):
-                _log(f"dashboard frame: {frame.url}")
-                return frame
-        except Exception:
+        if _frame_has_dashboard(frame):
+            _log(f"dashboard frame: {frame.url}")
+            return frame
+    if _frame_has_dashboard(page.main_frame):
+        _log("dashboard frame: using main frame")
+        return page.main_frame
+    for frame in page.frames:
+        if frame == page.main_frame:
             continue
-    try:
-        if page.main_frame.evaluate(JS_FRAME_HAS_DASHBOARD):
-            return page.main_frame
-    except Exception:
-        pass
+        if _frame_has_dashboard(frame, relaxed=True):
+            _log(f"dashboard frame (relaxed): {frame.url}")
+            return frame
+    if _frame_has_dashboard(page.main_frame, relaxed=True):
+        _log("dashboard frame (relaxed): main frame")
+        return page.main_frame
     return None
+
+
+def _click_performance_in_gmb_app(page: Page) -> bool:
+    """Open Performance from business.google.com (location home / menu)."""
+    try:
+        href = page.evaluate(
+            """
+            () => {
+              for (const a of document.querySelectorAll('a[href]')) {
+                const h = a.getAttribute('href') || '';
+                if (h.includes('promote/performance') || h.includes('/performance')) {
+                  a.scrollIntoView({ block: 'center', behavior: 'instant' });
+                  a.click();
+                  return h;
+                }
+              }
+              return null;
+            }
+            """
+        )
+        if href:
+            _log(f"gmb app: performance link {str(href)[:100]}")
+            return True
+    except Exception as exc:
+        _log(f"gmb app: performance href click failed: {exc}")
+    labels = [
+        "Performances",
+        "Performance",
+        "Statistiques",
+        "Interactions avec les clients",
+        "Voir les performances",
+    ]
+    for label in labels:
+        try:
+            page.get_by_role("link", name=re.compile(re.escape(label), re.I)).first.click(
+                timeout=5_000,
+            )
+            _log(f"gmb app: clicked link {label!r}")
+            return True
+        except Exception:
+            try:
+                page.get_by_text(re.compile(label, re.I)).first.click(timeout=5_000)
+                _log(f"gmb app: clicked text {label!r}")
+                return True
+            except Exception:
+                continue
+    return False
 
 
 def open_performance_overlay(page: Page) -> Page | None:
@@ -690,7 +872,18 @@ def open_performance_overlay(page: Page) -> Page | None:
     context = page.context
 
     def attempt_click() -> bool:
+        on_gmb_app = "business.google.com" in (page.url or "")
+        if on_gmb_app and _click_performance_in_gmb_app(page):
+            return True
         on_google_search = "google.com/search" in (page.url or "")
+        if on_google_search:
+            try:
+                mpd = page.evaluate(JS_CLICK_MPD_LINK)
+                if mpd:
+                    _log(f"overlay: opened performance via mpd link {str(mpd)[:90]}")
+                    return True
+            except Exception as exc:
+                _log(f"overlay: mpd link click failed: {exc}")
         if on_google_search:
             try:
                 page.evaluate(
@@ -735,6 +928,14 @@ def open_performance_overlay(page: Page) -> Page | None:
                 return True
             except Exception:
                 continue
+        if on_google_search:
+            try:
+                clicked = page.evaluate(JS_CLICK_OWNER_INTERACTIONS)
+                if clicked:
+                    _log(f"overlay: knowledge-panel interactions {clicked!r}")
+                    return True
+            except Exception as exc:
+                _log(f"overlay: knowledge-panel JS failed: {exc}")
         button_labels = ["Interactions avec les clients"]
         if not on_google_search:
             button_labels.extend(["Performances", "Statistiques"])
@@ -1630,7 +1831,9 @@ def main() -> int:
                     continue
                 url = tab_page.url or ""
                 if "google.com/search" in url and "sorry" not in url:
-                    shot = screenshot_public_fiche(tab_page, business_card_out)
+                    shot = screenshot_public_fiche(
+                        tab_page, business_card_out, search_query=search_query,
+                    )
                     if shot:
                         charts["business_card"] = shot
                         break
@@ -1705,21 +1908,36 @@ def main() -> int:
                 return None
             if primary or alias_only:
                 select_gmb_project(page, primary, alias_only)
-            # Origincbd uses Google Search for the public fiche; --no-search clients
-            # stay on business.google.com only (avoids CAPTCHA on a second Search).
+                if not _ensure_on_gmb_app(page):
+                    select_gmb_project(page, primary, alias_only)
+            # Open Performance while still on business.google.com (do not jump to
+            # Search first — that drops the in-app Performance entry point).
+            dashboard = open_performance_overlay(page)
+            if dashboard is not None:
+                if not args.no_search and search_query:
+                    gmb_page = page
+                    if open_search(gmb_page, search_query) and not _search_is_blocked(
+                        gmb_page,
+                    ):
+                        shot = screenshot_public_fiche(
+                            gmb_page, business_card_out, search_query=search_query,
+                        )
+                        if shot:
+                            charts["business_card"] = shot
+                return dashboard
             if not args.no_search:
                 if not charts.get("business_card") and search_query:
                     if open_search(page, search_query) and not _search_is_blocked(page):
                         charts["business_card"] = screenshot_public_fiche(
-                            page, business_card_out,
+                            page, business_card_out, search_query=search_query,
                         )
                 if charts.get("business_card") is None:
                     charts["business_card"] = screenshot_public_fiche(
-                        page, business_card_out,
+                        page, business_card_out, search_query=search_query,
                     )
             return open_performance_overlay(page)
 
-        # 0) Direct Performance / Knowledge Panel URL saved at login.
+        # 0) Direct Performance URL saved at login (#mpd=).
         if dash_url and "google.com/search" in dash_url and "#mpd=" in dash_url:
             try:
                 page.goto(dash_url, wait_until="domcontentloaded", timeout=60_000)
@@ -1727,7 +1945,7 @@ def main() -> int:
                 time.sleep(2.0)
                 if not _search_is_blocked(page):
                     charts["business_card"] = screenshot_public_fiche(
-                        page, business_card_out,
+                        page, business_card_out, search_query=search_query,
                     )
                     dashboard_page = open_performance_overlay(page)
                     if dashboard_page is None and "#mpd=" in page.url:
@@ -1735,15 +1953,37 @@ def main() -> int:
             except Exception as exc:
                 _log(f"dashboard-url: navigation failed: {exc}")
 
+        # 0b) Saved Search URL without #mpd= — reopen fiche and click interactions.
+        if (
+            dashboard_page is None
+            and dash_url
+            and "google.com/search" in dash_url
+            and "#mpd=" not in dash_url
+        ):
+            try:
+                _log("session: reopening saved Search URL (no #mpd= yet).")
+                page.goto(dash_url, wait_until="domcontentloaded", timeout=60_000)
+                _safe_wait_idle(page, timeout=25_000)
+                time.sleep(2.0)
+                if not _search_is_blocked(page):
+                    charts["business_card"] = screenshot_public_fiche(
+                        page, business_card_out, search_query=search_query,
+                    )
+                    dashboard_page = open_performance_overlay(page)
+                    if dashboard_page and "#mpd=" in (dashboard_page.url or ""):
+                        _log("session: Performance opened; re-save prepare URL with #mpd=.")
+            except Exception as exc:
+                _log(f"session-url: navigation failed: {exc}")
+
         # A) business.google.com first (when configured).
         if dashboard_page is None and args.prefer_gmb_app:
             dashboard_page = _capture_from_gmb_app()
 
-        # B) Google Search → fiche screenshot → « X interactions » (Origincbd).
+        # B) Google Search → fiche screenshot → « X interactions » (Origincbd / CC Habitat).
         if dashboard_page is None and search_query and open_search(page, search_query):
             _log("search: capturing public fiche (right panel) before Performance.")
             charts["business_card"] = screenshot_public_fiche(
-                page, business_card_out,
+                page, business_card_out, search_query=search_query,
             )
             dashboard_page = open_performance_overlay(page)
 
@@ -1848,6 +2088,12 @@ def main() -> int:
                 except OSError:
                     pass
             out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            if kpis and final_url and "#mpd=" in final_url:
+                try:
+                    _persist_session(session_path, context,
+                                     dashboard_page or page)
+                except Exception as exc:
+                    _log(f"session: could not update {session_path}: {exc}")
 
         print(f"Wrote {out_path}")
         for key, info in kpis.items():
