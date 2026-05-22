@@ -9,6 +9,7 @@ the per-metric endpoints.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date
 from typing import Any
 
@@ -37,6 +38,9 @@ DAILY_METRICS = [
     ("WEBSITE_CLICKS", "website_clicks"),
 ]
 TIMEOUT = 30
+
+# Avoid listing accounts twice per report (current + previous month).
+_LOCATION_CACHE: dict[str, str | None] = {}
 
 
 def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFrame]:
@@ -92,16 +96,24 @@ def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFram
 
 
 def _resolve_location(client: ClientConfig, token: str) -> str | None:
+    cached = _LOCATION_CACHE.get(client.id)
+    if cached is not None or client.id in _LOCATION_CACHE:
+        return cached
+
     gmb = client.gmb or {}
-    location = (gmb.get("location_id") or "").strip()
+    location = _normalize_location_id((gmb.get("location_id") or "").strip())
     if location:
-        if _is_valid_location_name(location):
-            return location
+        _LOCATION_CACHE[client.id] = location
+        return location
+    raw_loc = (gmb.get("location_id") or "").strip()
+    if raw_loc:
         logger.warning(
-            "[gmb] ignoring invalid or placeholder gmb.location_id for %s (%r); "
-            "falling back to account discovery",
+            "[gmb] ignoring invalid gmb.location_id for %s (%r); "
+            "use locations/123... or a numeric id, or "
+            "GMB_LOCATION_ID_%s in .env",
             client.id,
-            location,
+            raw_loc,
+            client.id.upper(),
         )
 
     account = (gmb.get("account_id") or "").strip()
@@ -111,6 +123,7 @@ def _resolve_location(client: ClientConfig, token: str) -> str | None:
             picked = locations[0]
             logger.info("[gmb] auto-selected location for %s from account %s: %s",
                         client.id, account, picked)
+            _LOCATION_CACHE[client.id] = picked
             return picked
         if len(locations) > 1:
             logger.warning(
@@ -120,6 +133,7 @@ def _resolve_location(client: ClientConfig, token: str) -> str | None:
                 account,
                 ", ".join(locations[:5]),
             )
+        _LOCATION_CACHE[client.id] = None
         return None
 
     accounts = _list_accounts(token)
@@ -134,6 +148,7 @@ def _resolve_location(client: ClientConfig, token: str) -> str | None:
                 discovered_account,
                 picked,
             )
+            _LOCATION_CACHE[client.id] = picked
             return picked
         if len(locations) > 1:
             logger.warning(
@@ -143,6 +158,7 @@ def _resolve_location(client: ClientConfig, token: str) -> str | None:
                 len(locations),
                 client.id,
             )
+            _LOCATION_CACHE[client.id] = None
             return None
     elif len(accounts) > 1:
         logger.warning(
@@ -151,54 +167,56 @@ def _resolve_location(client: ClientConfig, token: str) -> str | None:
             len(accounts),
             client.id,
         )
+    _LOCATION_CACHE[client.id] = None
+    return None
+
+
+def _get_json(url: str, token: str, *, params: dict[str, Any] | None = None,
+              label: str = "request") -> dict[str, Any] | None:
+    headers = {"Authorization": f"Bearer {token}"}
+    for attempt in range(4):
+        try:
+            response = requests.get(
+                url, headers=headers, params=params, timeout=TIMEOUT,
+            )
+        except requests.RequestException as exc:
+            logger.warning("[gmb] %s failed: %s", label, exc)
+            return None
+        if response.status_code == 429:
+            wait = int(response.headers.get("Retry-After", min(60, 2 ** attempt)))
+            logger.warning(
+                "[gmb] %s rate limited (429); retry in %ss (attempt %s/4)",
+                label, wait, attempt + 1,
+            )
+            time.sleep(wait)
+            continue
+        if not response.ok:
+            logger.warning("[gmb] %s HTTP %s: %s", label, response.status_code,
+                           _response_details(response)[:200])
+            return None
+        return response.json()
+    logger.warning("[gmb] %s still rate limited after retries", label)
     return None
 
 
 def _list_accounts(token: str) -> list[str]:
     global _GMB_ACCOUNT_403_WARNED
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        response = requests.get(ACCOUNTS_URL, headers=headers, timeout=TIMEOUT)
-        response.raise_for_status()
-    except requests.HTTPError as exc:
-        code = exc.response.status_code if exc.response is not None else None
-        if code == 403 and not _GMB_ACCOUNT_403_WARNED:
-            details = _response_details(exc.response)
-            logger.warning(
-                "[gmb] cannot list Business Profile accounts (403). Check "
-                "that the OAuth Google user has access to a GBP account and "
-                "that Business Profile APIs are enabled in Google Cloud. "
-                "Google response: %s",
-                details,
-            )
-            _GMB_ACCOUNT_403_WARNED = True
-        else:
-            logger.warning("[gmb] failed to list accounts: %s", exc)
+    payload = _get_json(ACCOUNTS_URL, token, label="list accounts")
+    if payload is None:
         return []
-    except requests.RequestException as exc:
-        logger.warning("[gmb] failed to list accounts: %s", exc)
-        return []
-
-    payload = response.json()
     entries = payload.get("accounts") or []
     return [str(e.get("name", "")).strip() for e in entries if e.get("name")]
 
 
 def _list_locations(token: str, account: str) -> list[str]:
-    headers = {"Authorization": f"Bearer {token}"}
-    params = {"readMask": "name", "pageSize": 100}
-    try:
-        response = requests.get(
-            LOCATIONS_URL.format(account=account),
-            headers=headers,
-            params=params,
-            timeout=TIMEOUT,
-        )
-        response.raise_for_status()
-    except requests.RequestException as exc:
-        logger.warning("[gmb] failed to list locations for %s: %s", account, exc)
+    payload = _get_json(
+        LOCATIONS_URL.format(account=account),
+        token,
+        params={"readMask": "name", "pageSize": 100},
+        label=f"list locations ({account})",
+    )
+    if payload is None:
         return []
-    payload = response.json()
     entries = payload.get("locations") or []
     return [str(e.get("name", "")).strip() for e in entries if e.get("name")]
 
@@ -213,13 +231,15 @@ def _response_details(response: requests.Response | None) -> str:
         text = (response.text or "").strip()
         return text[:500] if text else "empty response body"
 
-def _is_valid_location_name(location: str) -> bool:
-    loc = (location or "").strip()
-    if not loc:
-        return False
-    if "<" in loc or ">" in loc:
-        return False
-    return loc.startswith("locations/") and len(loc) > len("locations/")
+def _normalize_location_id(raw: str) -> str | None:
+    loc = (raw or "").strip()
+    if not loc or "<" in loc or ">" in loc:
+        return None
+    if loc.startswith("locations/") and len(loc) > len("locations/"):
+        return loc
+    if loc.isdigit():
+        return f"locations/{loc}"
+    return None
 
 
 def _parse_performance(payload: dict[str, Any]) -> pd.DataFrame:
