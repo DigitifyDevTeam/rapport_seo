@@ -1,28 +1,29 @@
 """Interactive login to Google Business Profile (Playwright).
 
-Opens Chromium so you can sign in and open the Performance dashboard.
-Press ENTER when Performances is visible (Vue d'ensemble, 702 interactions, …).
+Saves cookies + dashboard URL for ``gmb_ui_extract.py``.
 
-The script saves cookies + the best dashboard URL into a session file for
-``gmb_ui_extract.py``. Valid saves include:
+**If Playwright stays on accounts.google.com/signin** (even after MFA),
+Google is blocking automated browsers. Use real Chrome instead::
 
-- ``business.google.com/...#mpd=...`` (classic GBP app)
-- ``google.com/search?...#mpd=...`` (Search fiche → interactions link)
-- ``google.com/search?...`` with the Performance panel open (no ``#mpd=`` yet)
+    .\\scripts\\gmb_login_real_chrome.ps1
+
+Or per client::
+
+    python scripts/clients/origincbd/gmb_ui_prepare.py
 
 Usage:
   python scripts/gmb_ui_login.py --out outputs/_sessions/gmb-origincbd.json
-  python scripts/gmb_ui_login.py --out outputs/_sessions/gmb-origincbd.json ^
-      --profile outputs/_sessions/chrome-profile-gmb-origincbd
+  python scripts/gmb_ui_login.py --out ... --cdp http://127.0.0.1:9222
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from playwright.sync_api import BrowserContext, Page, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 PERF_URL_MARKERS = ("#mpd=", "promote/performance", "/performance")
 SIGNIN_MARKERS = (
@@ -30,6 +31,8 @@ SIGNIN_MARKERS = (
     "accounts.google.com/signin",
     "accounts.google.com/ServiceLogin",
     "accountchooser",
+    "signin/rejected",
+    "signin/identifier",
 )
 
 
@@ -39,6 +42,14 @@ def _apply_google_compat(context) -> None:
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         """
     )
+
+
+def _default_profile_for_out(out_path: Path) -> Path | None:
+    name = out_path.name
+    if name.startswith("gmb-") and name.endswith(".json"):
+        client = name[4:-5]
+        return out_path.parent / f"chrome-profile-gmb-{client}"
+    return None
 
 
 def _is_signin_url(url: str) -> bool:
@@ -52,7 +63,6 @@ def _url_looks_like_performance(url: str) -> bool:
 
 
 def _page_shows_performance_ui(page: Page) -> bool:
-    """True when the owner Performance dashboard is visible (any host URL)."""
     checks = (
         ("text=Performances", 2_000),
         ("text=Performance", 1_500),
@@ -60,22 +70,10 @@ def _page_shows_performance_ui(page: Page) -> bool:
         ("text=Interactions avec les clients", 1_500),
         ("text=Vue d'ensemble", 1_500),
         ("text=Vue d’ensemble", 1_500),
-        ("role=tab", 1_000),
     )
     for selector, timeout in checks:
         try:
-            loc = page.locator(selector).first
-            if loc.is_visible(timeout=timeout):
-                if selector.startswith("role=tab"):
-                    # Tabs alone are weak; require a performance title too.
-                    try:
-                        if page.get_by_text("Performances", exact=False).first.is_visible(
-                            timeout=800,
-                        ):
-                            return True
-                    except Exception:
-                        pass
-                    continue
+            if page.locator(selector).first.is_visible(timeout=timeout):
                 return True
         except Exception:
             continue
@@ -83,7 +81,6 @@ def _page_shows_performance_ui(page: Page) -> bool:
 
 
 def _find_performance_target(context: BrowserContext) -> tuple[Page | None, str, str]:
-    """Return (page, url, reason) for the best open tab showing Performance."""
     pages = list(context.pages)
     if not pages:
         return None, "", "no browser tabs"
@@ -94,95 +91,160 @@ def _find_performance_target(context: BrowserContext) -> tuple[Page | None, str,
         if _is_signin_url(url):
             continue
         if _url_looks_like_performance(url):
-            return page, url, "URL contains performance marker (#mpd= or /performance)"
+            return page, url, "URL contains #mpd= or /performance"
         if _page_shows_performance_ui(page):
             reason = "Performance UI visible"
-            if "#mpd=" in url:
-                return page, url, reason + " (#mpd= in URL)"
             if "google.com/search" in url:
-                # Prefer Search+Performance over plain business.google.com list.
                 if best is None or "google.com/search" not in (best[1] or ""):
-                    best = (page, url, reason + " (Google Search dashboard)")
+                    best = (page, url, reason + " (Google Search)")
             elif best is None:
                 best = (page, url, reason)
 
     if best:
         return best
-    # Last resort: any non-sign-in tab (user may still be loading).
     for page in pages:
         url = page.url or ""
-        if not _is_signin_url(url) and "business.google.com" in url:
-            return page, url, "business.google.com (confirm Performance is open)"
-    return None, pages[0].url if pages else "", "still on sign-in or wrong tab"
+        if not _is_signin_url(url) and ("google.com" in url or "business.google.com" in url):
+            return page, url, "logged-in page (confirm Performance is open)"
+    return None, pages[0].url if pages else "", "still on sign-in"
 
 
 def _print_tab_status(context: BrowserContext) -> None:
     print("\n  Open tabs:")
     for i, page in enumerate(context.pages, 1):
-        url = (page.url or "")[:100]
-        perf = _page_shows_performance_ui(page) if not _is_signin_url(page.url or "") else False
-        flag = " [Performance visible]" if perf else ""
+        url = (page.url or "")[:110]
         if _is_signin_url(page.url or ""):
-            flag = " [still sign-in — finish login here]"
+            flag = " [SIGN-IN — Google blocked automation; use gmb_login_real_chrome.ps1]"
+        elif _page_shows_performance_ui(page):
+            flag = " [Performance visible ✓]"
+        else:
+            flag = ""
         print(f"    {i}. {url}{flag}")
+
+
+def _save_session(
+    context: BrowserContext,
+    save_page: Page,
+    out_path: Path,
+    *,
+    force: bool = False,
+) -> int:
+    url = save_page.url or ""
+    if _is_signin_url(url) and not force:
+        print("\n  Refusing to save: still on Google sign-in.", file=sys.stderr)
+        return 1
+
+    if "google.com/search" in url and "#mpd=" not in url:
+        try:
+            link = save_page.locator('a[href*="#mpd="]').first
+            href = link.get_attribute("href", timeout=3_000)
+            if href and "#mpd=" in href:
+                url = href if href.startswith("http") else f"https://www.google.com{href}"
+        except Exception:
+            pass
+
+    payload = {"url": url, "storage_state": context.storage_state()}
+    out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(f"\nSaved session to {out_path}")
+    print(f"Captured URL: {url[:220]}")
+    return 0
+
+
+def _run_cdp_mode(pw, cdp_url: str, out_path: Path, force: bool) -> int:
+    print(f"\nConnecting to Chrome at {cdp_url} …")
+    try:
+        browser = pw.chromium.connect_over_cdp(cdp_url)
+    except Exception as exc:
+        print(f"Cannot connect: {exc}", file=sys.stderr)
+        print("\nStart Chrome first:")
+        print("  .\\scripts\\gmb_login_real_chrome.ps1")
+        return 1
+
+    if not browser.contexts:
+        print("No browser context found.", file=sys.stderr)
+        return 1
+
+    context = browser.contexts[0]
+    print(f"Connected — {len(context.pages)} tab(s).")
+    _print_tab_status(context)
+
+    perf_page, perf_url, reason = _find_performance_target(context)
+    if perf_page and (
+        _url_looks_like_performance(perf_url)
+        or _page_shows_performance_ui(perf_page)
+        or not _is_signin_url(perf_url)
+    ):
+        print(f"\n  Saving — {reason}")
+        return _save_session(context, perf_page, out_path, force=force)
+
+    print("\n  Open Performances in Chrome, then run this command again.")
+    return 1
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, help="Session JSON output path")
-    parser.add_argument(
-        "--profile",
-        default="",
-        help="Persistent Chromium profile (recommended — stays logged in).",
-    )
-    parser.add_argument(
-        "--channel",
-        default="chrome",
-        help="Browser channel (chrome recommended on Windows).",
-    )
+    parser.add_argument("--profile", default="", help="Persistent Chrome profile dir")
+    parser.add_argument("--channel", default="chrome", help="chrome | msedge")
     parser.add_argument(
         "--start-url",
-        default="https://www.google.com/search?q=Origine+CBD+Paris",
-        help="Initial URL (Search fiche is often easier than business.google.com).",
-    )
-    parser.add_argument(
-        "--location-name",
         default="",
-        help="Optional text to click after load (business name).",
+        help="Initial URL (default: Google Search for --client-hint)",
     )
+    parser.add_argument("--location-name", default="")
+    parser.add_argument("--client-hint", default="origincbd")
     parser.add_argument(
-        "--client-hint",
+        "--cdp",
         default="",
-        help="Optional client id for on-screen instructions.",
+        help="Connect to real Chrome, e.g. http://127.0.0.1:9222 (see gmb_login_real_chrome.ps1)",
     )
-    parser.add_argument(
-        "--force-save",
-        action="store_true",
-        help="Save session from the active tab even if Performance was not detected.",
-    )
+    parser.add_argument("--force-save", action="store_true")
     args = parser.parse_args()
 
     out_path = Path(args.out).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     with sync_playwright() as pw:
+        if args.cdp.strip():
+            return _run_cdp_mode(pw, args.cdp.strip(), out_path, args.force_save)
+
+        profile = Path(args.profile).resolve() if args.profile else None
+        if profile is None:
+            profile = _default_profile_for_out(out_path)
+        if profile:
+            profile.mkdir(parents=True, exist_ok=True)
+            print(f"Using profile: {profile}")
+
         launch_kw = dict(
             headless=False,
             channel=args.channel or None,
             ignore_default_args=["--enable-automation"],
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+            ],
         )
-        if args.profile:
+        start_url = (args.start_url or "").strip()
+        if not start_url:
+            start_url = "https://www.google.com/search?hl=fr&q=Origine+CBD+Paris"
+
+        browser: Browser | None = None
+        if profile:
             context = pw.chromium.launch_persistent_context(
-                user_data_dir=str(Path(args.profile).resolve()),
+                user_data_dir=str(profile),
                 viewport={"width": 1600, "height": 900},
                 locale="fr-FR",
                 **launch_kw,
             )
             page = context.pages[0] if context.pages else context.new_page()
             _apply_google_compat(context)
-            browser = None
         else:
+            print(
+                "\nWARNING: No --profile. Google often blocks login.\n"
+                "Prefer: python scripts/clients/origincbd/gmb_ui_prepare.py\n"
+                "Or: .\\scripts\\gmb_login_real_chrome.ps1\n",
+                file=sys.stderr,
+            )
             browser = pw.chromium.launch(**launch_kw)
             context = browser.new_context(
                 viewport={"width": 1600, "height": 900},
@@ -191,7 +253,7 @@ def main() -> int:
             _apply_google_compat(context)
             page = context.new_page()
 
-        page.goto(args.start_url, wait_until="domcontentloaded")
+        page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
 
         if args.location_name:
             try:
@@ -200,21 +262,11 @@ def main() -> int:
                 pass
 
         print("")
-        print("Use the CHROMIUM WINDOW that Playwright opened (not another browser).")
-        print("")
-        print("Recommended flow (works like your screenshot):")
-        print("  1) Sign in with Google + Authenticator IN THAT WINDOW.")
-        print("  2) Open Google Search for the business (or business.google.com).")
-        print("  3) Click « XXX interactions avec les clients » / « Performances ».")
-        print("  4) Wait until you see « Performances », « Vue d'ensemble », KPIs.")
-        print("  5) Press ENTER here.")
-        print("")
-        print("Tip: use --profile so you stay logged in next month:")
-        print("  --profile outputs/_sessions/chrome-profile-gmb-origincbd")
+        print("If this window NEVER leaves sign-in after MFA:")
+        print("  → Google blocks Playwright. Press Ctrl+C and run:")
+        print("  .\\scripts\\gmb_login_real_chrome.ps1")
         print("")
 
-        perf_page: Page | None = None
-        perf_url = ""
         while True:
             input("Press ENTER when Performance is visible: ")
             perf_page, perf_url, reason = _find_performance_target(context)
@@ -225,69 +277,32 @@ def main() -> int:
                 or _page_shows_performance_ui(perf_page)
             ):
                 print(f"\n  OK — {reason}")
-                break
+                rc = _save_session(context, perf_page, out_path)
+                context.close()
+                if browser:
+                    browser.close()
+                return rc
 
             if args.force_save and perf_page and not _is_signin_url(perf_url):
-                print(f"\n  Force-save from: {perf_url[:100]}")
-                break
+                rc = _save_session(context, perf_page, out_path, force=True)
+                context.close()
+                if browser:
+                    browser.close()
+                return rc
 
-            if _is_signin_url(perf_url) or all(
-                _is_signin_url(p.url or "") for p in context.pages
-            ):
+            if all(_is_signin_url(p.url or "") for p in context.pages):
                 print(
-                    "\n  Still on Google SIGN-IN in the Playwright window.\n"
-                    "  Complete login + MFA in THAT window, then open Performance,\n"
-                    "  then press ENTER again.\n"
-                    "  (If you logged in elsewhere, it does not count.)",
+                    "\n  ALL tabs still on Google SIGN-IN.\n"
+                    "  Playwright cannot complete Google login on your machine.\n"
+                    "  Stop (Ctrl+C) and run:\n"
+                    "    .\\scripts\\gmb_login_real_chrome.ps1\n",
                 )
                 continue
 
-            if perf_page and _page_shows_performance_ui(perf_page):
-                print(f"\n  OK — Performance detected ({reason})")
-                break
-
             print(
-                "\n  Performance not detected yet.\n"
-                "  • Click « interactions avec les clients » on the owner panel\n"
-                "  • Or open business.google.com → location → Performance\n"
-                "  • Make sure the Performance panel is in the Playwright window\n"
-                "  • Type --force-save on the command line to save anyway\n"
-                f"  • Best tab URL: {(perf_url or page.url)[:120]}",
+                "\n  Performance not detected. Open « interactions avec les clients »\n"
+                "  in THIS window, or switch to real Chrome (script above).",
             )
-
-        save_page = perf_page or page
-        url = save_page.url or perf_url or page.url
-        # If Performance is open on Search without #mpd=, try to capture hash from link.
-        if "google.com/search" in url and "#mpd=" not in url:
-            try:
-                link = save_page.locator('a[href*="#mpd="]').first
-                href = link.get_attribute("href", timeout=3_000)
-                if href and "#mpd=" in href:
-                    if href.startswith("/"):
-                        url = "https://www.google.com" + href
-                    elif href.startswith("http"):
-                        url = href
-                    else:
-                        base = url.split("#", 1)[0]
-                        frag = href.split("#", 1)[-1]
-                        url = f"{base}#{frag}" if frag.startswith("mpd=") else href
-            except Exception:
-                pass
-
-        storage_state = context.storage_state()
-        payload = {"url": url, "storage_state": storage_state}
-        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        print(f"\nSaved session to {out_path}")
-        print(f"Captured URL: {url[:200]}")
-        if "#mpd=" not in url and "google.com/search" in url:
-            print(
-                "Note: URL has no #mpd= — extract will reopen Search and click "
-                "« interactions » using this URL + cookies.",
-            )
-
-        context.close()
-        if browser is not None:
-            browser.close()
 
     return 0
 
