@@ -125,8 +125,9 @@ def _pick_headline_int(candidates: list[int]) -> int | None:
         return None
     years = set(range(2015, 2036))
     non_year = [c for c in candidates if c not in years]
-    pool = non_year if non_year else candidates
-    return max(pool)
+    if not non_year:
+        return None
+    return max(non_year)
 
 
 def _best_headline_int(text: str) -> int | None:

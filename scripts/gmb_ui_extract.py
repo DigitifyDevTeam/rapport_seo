@@ -68,7 +68,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v2"
+GMB_UI_CAPTURE_VERSION = "calmonth-v3"
 
 DATE_PRESET_LABELS = [
     "Mois précédent", "Mois dernier", "Le mois dernier",
@@ -1395,10 +1395,14 @@ def select_reporting_period(target: Page | Frame, period_start: str,
         win_end = _fr_month_year(period_end)
         if win_start and win_end and win_start != win_end:
             _log(
-                "date range: 26→26 window is %s → %s; GBP picker uses %s only.",
-                win_start, win_end, end_label or win_end,
+                f"date range: 26→26 window is {win_start} → {win_end}; "
+                f"GBP picker uses {end_label or win_end} only.",
             )
     return select_date_range(target, cal_start, cal_end)
+
+
+def _is_year_only(n: int) -> bool:
+    return 2015 <= n <= 2036
 
 
 def _normalize_kpi_digits(raw: str | None) -> str | None:
@@ -1410,6 +1414,8 @@ def _normalize_kpi_digits(raw: str | None) -> str | None:
     try:
         n = int(digits)
     except ValueError:
+        return None
+    if _is_year_only(n):
         return None
     if n > 50_000_000:
         return None

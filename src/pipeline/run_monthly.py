@@ -54,7 +54,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v2"
+GMB_UI_CAPTURE_VERSION = "calmonth-v3"
 
 
 @dataclass
@@ -206,8 +206,15 @@ def _build_report_data(client: ClientConfig, period: Period,
 
     for key, val in extract_gmb_kpis_from_chart_paths(
             gmb_ui_charts, output_dir).items():
-        if val:
-            gmb_ui_kpis[key] = val
+        if not val:
+            continue
+        cleaned = str(val).strip().replace("\u202f", "").replace(" ", "")
+        if cleaned.isdigit() and 2015 <= int(cleaned) <= 2036:
+            continue
+        existing = (gmb_ui_kpis.get(key) or "").strip()
+        if existing and existing.lower() not in ("n/a", ""):
+            continue
+        gmb_ui_kpis[key] = val
     for key, val in _load_gmb_kpi_override_json(output_dir).items():
         s = str(val).strip()
         if s:
@@ -926,9 +933,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         logger.info("[gmb-ui] stderr:\n%s", result.stderr[-2000:])
     if result.returncode != 0:
         logger.warning(
-            "[gmb-ui] capture exited with code %d",
+            "[gmb-ui] capture exited with code %d — not using stale gmb_ui.json",
             result.returncode,
         )
+        return False
 
     for line in (result.stdout or "").splitlines():
         line = line.strip()
@@ -936,6 +944,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             logger.info("[gmb-ui] %s", line)
 
     gmb_ui = _load_gmb_ui(output_dir)
+    if (gmb_ui or {}).get("capture_version") != GMB_UI_CAPTURE_VERSION:
+        logger.warning(
+            "[gmb-ui] gmb_ui.json missing or wrong capture_version "
+            "(expected %s)",
+            GMB_UI_CAPTURE_VERSION,
+        )
+        return False
     kpis = _resolve_gmb_ui_kpis(gmb_ui)
     if kpis:
         logger.info("[gmb-ui] captured KPIs: %s", ", ".join(
