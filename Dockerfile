@@ -7,10 +7,10 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     SEO_REPORT_GMB_NO_PROFILE=1 \
-    SEO_REPORT_BROWSER_CHANNEL=chromium
+    SEO_REPORT_BROWSER_CHANNEL=chromium \
+    SEO_REPORT_EXPORT_PDF=false
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice-impress \
     tesseract-ocr \
     tesseract-ocr-fra \
     nodejs \

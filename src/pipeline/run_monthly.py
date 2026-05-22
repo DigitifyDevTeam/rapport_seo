@@ -94,13 +94,15 @@ def _disabled_connectors(client: ClientConfig) -> set[str]:
 
 
 def _ui_capture_disabled(client: ClientConfig) -> set[str]:
-    """Browser-based GMB/Clarity capture only (not API fallbacks)."""
+    """Browser-based GMB/Clarity capture only (not API fallbacks).
+
+    Only ``SEO_REPORT_SKIP_UI_CONNECTORS`` disables UI capture.
+    ``SEO_REPORT_SKIP_CONNECTORS`` is for API-level skipping and does NOT
+    affect browser capture — so Docker with sessions can still capture while
+    a plain VPS without browsers can skip APIs independently.
+    """
     skip = set()
-    raw = (
-        env("SEO_REPORT_SKIP_UI_CONNECTORS")
-        or env("SEO_REPORT_SKIP_CONNECTORS")
-        or ""
-    ).strip()
+    raw = (env("SEO_REPORT_SKIP_UI_CONNECTORS") or "").strip()
     if raw:
         skip.update(part.strip().lower()
                     for part in raw.split(",") if part.strip())
@@ -425,7 +427,11 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     Node is not available. The pipeline never calls the Clarity Data Export
     API (capped at 10/day and limited to last 1-3 days).
     """
-    if "clarity" in _ui_capture_disabled(client):
+    disabled = _ui_capture_disabled(client)
+    logger.info("[clarity-ui] disabled=%s  (SEO_REPORT_SKIP_UI_CONNECTORS=%r)",
+                disabled, env("SEO_REPORT_SKIP_UI_CONNECTORS") or "")
+    if "clarity" in disabled:
+        logger.info("[clarity-ui] skipped (disabled for %s)", client.id)
         return
 
     json_out = output_dir / "clarity_ui.json"
@@ -437,6 +443,8 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         return
 
     session_path = _CLARITY_UI_SESSIONS_DIR / f"clarity-{client.id}.json"
+    logger.info("[clarity-ui] session path=%s  exists=%s",
+                session_path, session_path.exists())
     if not session_path.exists():
         logger.warning(
             "[clarity-ui] no saved session at %s — widget PNGs need a Windows "
@@ -492,8 +500,14 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         timeout = 420
 
+    logger.info("[clarity-ui] cmd: %s", " ".join(str(c) for c in cmd))
     try:
-        result = subprocess.run(cmd, timeout=timeout, check=False)
+        result = subprocess.run(cmd, timeout=timeout, check=False,
+                                capture_output=True, text=True)
+        if result.stdout:
+            logger.info("[clarity-ui] stdout:\n%s", result.stdout[-2000:])
+        if result.stderr:
+            logger.info("[clarity-ui] stderr:\n%s", result.stderr[-2000:])
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         logger.warning("[clarity-ui] capture failed: %s", exc)
         return
@@ -757,11 +771,17 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     Writes ``gmb_ui.json``, ``gmb_business_card.png``, and ``gmb_card_*.png``
     next to the report. Returns True when at least one KPI was captured.
     """
-    if "gmb" in _ui_capture_disabled(client):
+    disabled = _ui_capture_disabled(client)
+    logger.info("[gmb-ui] disabled=%s  (SEO_REPORT_SKIP_UI_CONNECTORS=%r)",
+                disabled, env("SEO_REPORT_SKIP_UI_CONNECTORS") or "")
+    if "gmb" in disabled:
+        logger.info("[gmb-ui] skipped (disabled for %s)", client.id)
         return False
 
     gmb_cfg = getattr(client, "gmb", None) or {}
     session_path = _GMB_UI_SESSIONS_DIR / f"gmb-{client.id}.json"
+    logger.info("[gmb-ui] session path=%s  exists=%s",
+                session_path, session_path.exists())
     if gmb_cfg.get("ui_manual_capture") or _gmb_ui_assets_ready(output_dir):
         existing = _load_gmb_ui(output_dir)
         if _resolve_gmb_ui_kpis(existing) or _gmb_ui_assets_ready(output_dir):
@@ -861,6 +881,7 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         project_name,
         period.label if period else "auto",
     )
+    logger.info("[gmb-ui] cmd: %s", " ".join(str(c) for c in cmd))
     try:
         result = subprocess.run(cmd, capture_output=True, text=True,
                                 timeout=600, check=False)
@@ -868,11 +889,12 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         logger.warning("[gmb-ui] capture failed: %s", exc)
         return False
 
+    if result.stderr:
+        logger.info("[gmb-ui] stderr:\n%s", result.stderr[-2000:])
     if result.returncode != 0:
         logger.warning(
-            "[gmb-ui] capture exited with code %d. stderr: %s",
+            "[gmb-ui] capture exited with code %d",
             result.returncode,
-            (result.stderr or "").strip()[-500:],
         )
 
     for line in (result.stdout or "").splitlines():
@@ -1033,9 +1055,13 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     render_pptx(TEMPLATE_PATH, pptx_path, data)
     logger.info("[%s] wrote %s", client.id, pptx_path)
 
-    pdf_path = export_pdf(pptx_path)
-    if pdf_path:
-        logger.info("[%s] wrote %s", client.id, pdf_path)
+    pdf_enabled = (env("SEO_REPORT_EXPORT_PDF", "false") or "false").lower()
+    if pdf_enabled in ("1", "true", "yes", "on"):
+        pdf_path = export_pdf(pptx_path)
+        if pdf_path:
+            logger.info("[%s] wrote %s", client.id, pdf_path)
+    else:
+        pdf_path = None
 
     recipients = list((client.delivery or {}).get("emails") or [])
     if recipients and pdf_path:
