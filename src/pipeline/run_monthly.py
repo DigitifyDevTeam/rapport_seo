@@ -971,6 +971,30 @@ def _serialize(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _log_fetch_summary(client_id: str, current: dict[str, Any]) -> None:
+    """Log row counts so an empty deck is easier to diagnose on the VPS."""
+    ga4 = current.get("ga4") or {}
+    gsc = current.get("gsc") or {}
+    gmb = current.get("gmb") or {}
+    clarity = current.get("clarity") or {}
+
+    def _rows(frame: Any) -> int:
+        if isinstance(frame, pd.DataFrame):
+            return len(frame)
+        return 0
+
+    logger.info(
+        "[%s] connector rows — ga4 organic_daily=%s pages_daily=%s | "
+        "gsc daily=%s | gmb daily=%s | clarity insights=%s",
+        client_id,
+        _rows(ga4.get("organic_daily")),
+        _rows(ga4.get("pages_daily")),
+        _rows(gsc.get("daily")),
+        _rows(gmb.get("daily")),
+        _rows(clarity.get("insights")),
+    )
+
+
 def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     output_dir = client.output_dir / period.label
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -983,6 +1007,7 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
         _capture_gmb_ui(client, output_dir, period)
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
+    _log_fetch_summary(client.id, current)
 
     data = _build_report_data(client, period, current, previous, output_dir)
 
