@@ -35,6 +35,20 @@ def main() -> int:
     else:
         worst = max(worst, _status(FAIL, ".env missing — copy from your PC"))
 
+    from src.config import TEMPLATE_PATH
+
+    if TEMPLATE_PATH.is_file():
+        worst = max(worst, _status(OK, f"Report template: {TEMPLATE_PATH}"))
+    else:
+        worst = max(
+            worst,
+            _status(
+                FAIL,
+                f"Missing report template {TEMPLATE_PATH} — run "
+                f"`python scripts/build_template.py` or copy your .pptx from Windows",
+            ),
+        )
+
     secrets = _PROJECT_ROOT / "secrets"
     token = secrets / "google_oauth_token.json"
     client_secret = secrets / "google_oauth_client_secret.json"

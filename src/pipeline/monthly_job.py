@@ -1,11 +1,6 @@
-"""Scheduled monthly job: all production clients + Google Drive upload.
-
-Used by cron/systemd on the VPS (day 26 by default)::
+"""Run all production clients and upload each report to Google Drive.
 
     python -m src.pipeline.monthly_job
-
-Manual run for a specific month::
-
     python -m src.pipeline.monthly_job --month 2026-04
 """
 
@@ -53,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--month",
-        help="Reporting month YYYY-MM (default: current month on schedule day)",
+        help="Reporting month YYYY-MM (default: derived from REPORT_CYCLE_DAY in .env)",
     )
     args = parser.parse_args(argv)
     logging.basicConfig(
