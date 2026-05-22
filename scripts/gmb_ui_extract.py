@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -1726,6 +1727,20 @@ def _default_period() -> tuple[str, str]:
     return start, last_day.isoformat()
 
 
+def _docker_browser_args() -> list[str]:
+    """Chromium flags required when running as root inside Docker."""
+    args = ["--disable-blink-features=AutomationControlled"]
+    flag = (os.environ.get("SEO_REPORT_DOCKER")
+            or os.environ.get("SEO_REPORT_BROWSER_NO_SANDBOX") or "")
+    if flag.strip().lower() in ("1", "true", "yes", "on"):
+        args.extend([
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ])
+    return args
+
+
 def _launch_browser_context(pw, args: argparse.Namespace,
                              storage_state: Any | None):
     """Return (context, browser_or_none, page)."""
@@ -1738,7 +1753,7 @@ def _launch_browser_context(pw, args: argparse.Namespace,
         headless=not args.show,
         channel=channel,
         ignore_default_args=["--enable-automation"],
-        args=["--disable-blink-features=AutomationControlled"],
+        args=_docker_browser_args(),
     )
     viewport = {"width": 1600, "height": 900}
     if args.profile:

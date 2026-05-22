@@ -1352,10 +1352,21 @@ async function main() {
   const downloadDir = path.join(path.dirname(outPath), "_clarity_downloads");
   fs.mkdirSync(downloadDir, { recursive: true });
 
+  const dockerMode = ["1", "true", "yes", "on"].includes(
+    String(process.env.SEO_REPORT_DOCKER || process.env.SEO_REPORT_BROWSER_NO_SANDBOX || "").toLowerCase(),
+  );
+  const browserArgs = ["--disable-blink-features=AutomationControlled"];
+  if (dockerMode) {
+    browserArgs.push(
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    );
+  }
   const browser = await puppeteer.launch({
     headless: show || record ? false : "new",
     defaultViewport: { width: 1600, height: 900 },
-    args: ["--disable-blink-features=AutomationControlled"],
+    args: browserArgs,
     ignoreDefaultArgs: ["--enable-automation"],
   });
   await browser.defaultBrowserContext().setDownloadBehavior({
