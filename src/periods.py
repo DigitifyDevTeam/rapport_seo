@@ -1,18 +1,40 @@
 """Reporting period helpers.
 
 A reporting period is identified by ``YYYY-MM`` (the report month *M*).
-Data windows use a fixed day-of-month anchor (default **25**):
+Data windows use a fixed day-of-month anchor (``REPORT_CYCLE_DAY``, default **26**):
 
-- **Current period:** 25/(M-1) → 25/M  (e.g. April report → 25 mars – 25 avril)
-- **Previous period:** 25/(M-2) → 25/(M-1)
+- **Current period:** 26/(M-1) → 26/M  (e.g. April report → 26 mars – 26 avril)
+- **Previous period:** 26/(M-2) → 26/(M-1)
+
+Override the anchor with ``REPORT_CYCLE_DAY`` in ``.env`` (e.g. ``25`` for legacy runs).
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, datetime
 
-REPORT_CYCLE_DAY = 25
+
+def report_cycle_day() -> int:
+    """Day-of-month anchor for 26→26 (or 25→25) reporting windows."""
+    raw = (os.environ.get("REPORT_CYCLE_DAY") or "26").strip()
+    try:
+        day = int(raw)
+    except ValueError:
+        day = 26
+    return max(1, min(28, day))
+
+
+def schedule_day_of_month() -> int:
+    """Calendar day when the VPS/cron job should fire (default: same as cycle day)."""
+    raw = (os.environ.get("SEO_REPORT_SCHEDULE_DAY") or "").strip()
+    if raw:
+        try:
+            return max(1, min(28, int(raw)))
+        except ValueError:
+            pass
+    return report_cycle_day()
 
 _MONTHS_FR = (
     "janvier",
@@ -35,15 +57,19 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
     return index // 12, (index % 12) + 1
 
 
-def cycle_end_date(year: int, month: int, *, anchor_day: int = REPORT_CYCLE_DAY) -> date:
+def cycle_end_date(year: int, month: int,
+                     *, anchor_day: int | None = None) -> date:
     """Last day of the reporting window for calendar month ``YYYY-MM``."""
-    return date(year, month, anchor_day)
+    anchor = report_cycle_day() if anchor_day is None else anchor_day
+    return date(year, month, anchor)
 
 
-def cycle_start_date(year: int, month: int, *, anchor_day: int = REPORT_CYCLE_DAY) -> date:
-    """First day of the reporting window (25th of the month before *M*)."""
+def cycle_start_date(year: int, month: int,
+                       *, anchor_day: int | None = None) -> date:
+    """First day of the reporting window (anchor day of the month before *M*)."""
+    anchor = report_cycle_day() if anchor_day is None else anchor_day
     prev_year, prev_month = _shift_month(year, month, -1)
-    return date(prev_year, prev_month, anchor_day)
+    return date(prev_year, prev_month, anchor)
 
 
 def format_date_fr(value: date) -> str:
@@ -79,6 +105,20 @@ class Period:
         if today.month == 1:
             return cls(today.year - 1, 12)
         return cls(today.year, today.month - 1)
+
+    @classmethod
+    def for_scheduled_run(cls, today: date | None = None) -> "Period":
+        """Report month used when the monthly job runs on the schedule day.
+
+        On or after ``SEO_REPORT_SCHEDULE_DAY`` (default: ``REPORT_CYCLE_DAY``,
+        e.g. 26), the job reports on the **current** calendar month (*M*).
+        Before that day, it uses the previous calendar month.
+        """
+        today = today or date.today()
+        trigger = schedule_day_of_month()
+        if today.day >= trigger:
+            return cls(today.year, today.month)
+        return cls.previous_complete(today)
 
     @property
     def label(self) -> str:

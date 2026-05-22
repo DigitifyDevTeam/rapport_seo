@@ -61,13 +61,16 @@ logger = logging.getLogger(__name__)
 GA4_SCOPES = ["https://www.googleapis.com/auth/analytics"]
 GSC_SCOPES = ["https://www.googleapis.com/auth/webmasters"]
 GMB_SCOPES = ["https://www.googleapis.com/auth/business.manage"]
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 # Union of every scope the app may need across connectors. Loading the OAuth
 # token with this union ensures the access_token returned by Google's refresh
 # endpoint is valid for ALL Google APIs the pipeline calls, and prevents one
 # connector from saving a "narrowed" token file that would break the next
 # connector in the same run (or the next day when it tries to refresh).
-ALL_GOOGLE_SCOPES: list[str] = sorted({*GA4_SCOPES, *GSC_SCOPES, *GMB_SCOPES})
+ALL_GOOGLE_SCOPES: list[str] = sorted({
+    *GA4_SCOPES, *GSC_SCOPES, *GMB_SCOPES, *DRIVE_SCOPES,
+})
 
 
 def _credentials_path() -> Path | None:

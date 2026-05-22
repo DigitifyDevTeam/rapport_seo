@@ -89,6 +89,21 @@ def get_client(client_id: str, path: Path = CONFIG_PATH) -> ClientConfig:
     raise KeyError(f"Client '{client_id}' not found in {path}")
 
 
+_PRODUCTION_SKIP_IDS = frozenset({"example"})
+
+
+def load_production_clients(path: Path = CONFIG_PATH) -> list[ClientConfig]:
+    """Clients included in scheduled VPS runs (excludes demo ``example``)."""
+    override = (env("SEO_REPORT_CLIENT_IDS") or "").strip()
+    if override:
+        ids = [part.strip() for part in override.split(",") if part.strip()]
+        return [get_client(client_id, path) for client_id in ids]
+    return [
+        client for client in load_clients(path)
+        if client.id not in _PRODUCTION_SKIP_IDS
+    ]
+
+
 def _to_client(entry: dict[str, Any], defaults: dict[str, Any]) -> ClientConfig:
     client_id = str(entry["id"])
     gmb = dict(entry.get("gmb") or {})

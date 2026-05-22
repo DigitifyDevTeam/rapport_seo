@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SEO reports on the 26th of each month
+
+[Timer]
+# Day 26 at 06:00 — override REPORT_CYCLE_DAY / SEO_REPORT_SCHEDULE_* in .env if needed
+OnCalendar=*-*-26 06:00:00
+Persistent=true
+AccuracySec=1h
+
+[Install]
+WantedBy=timers.target

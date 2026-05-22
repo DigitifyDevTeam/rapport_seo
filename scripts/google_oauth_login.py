@@ -15,6 +15,8 @@ Prereqs:
 Output:
     - secrets/google_oauth_token.json
       (or GOOGLE_OAUTH_TOKEN_FILE in `.env`)
+
+Includes GA4, GSC, GMB, and Google Drive scopes.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv
 
 from src.config import PROJECT_ROOT, env
-from src.connectors.google_auth import GA4_SCOPES, GSC_SCOPES, GMB_SCOPES
+from src.connectors.google_auth import ALL_GOOGLE_SCOPES
 
 
 def _resolve_client_secret_path() -> Path:
@@ -84,7 +86,7 @@ def main() -> int:
             f"InstalledAppFlow.run_local_server()."
         )
 
-    scopes = sorted(set(GA4_SCOPES + GSC_SCOPES + GMB_SCOPES))
+    scopes = list(ALL_GOOGLE_SCOPES)
 
     from google_auth_oauthlib.flow import InstalledAppFlow
 

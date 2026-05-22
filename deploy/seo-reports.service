@@ -1,0 +1,20 @@
+[Unit]
+Description=SEO monthly reports (4 clients + Google Drive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=seo-reports
+Group=seo-reports
+WorkingDirectory=/opt/rapport_seo
+EnvironmentFile=/opt/rapport_seo/.env
+# Headless browsers (Playwright / Puppeteer)
+Environment=DISPLAY=:99
+ExecStart=/opt/rapport_seo/.venv/bin/python -m src.pipeline.monthly_job
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=14400
+
+[Install]
+WantedBy=multi-user.target

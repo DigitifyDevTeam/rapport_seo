@@ -1,8 +1,7 @@
-"""APScheduler entry point.
+"""APScheduler entry point (optional long-lived process on the VPS).
 
-Generates a report for every client on the 5th of each month at 06:00 in
-the local timezone. Run as a long-lived process or register the module as
-a Windows Scheduled Task / cron job.
+Prefer **systemd timer** or **cron** calling ``python -m src.pipeline.monthly_job``
+so the server does not need a 24/7 Python process.
 
 Usage::
 
@@ -12,36 +11,54 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from src.config import load_clients
-from src.periods import Period
-from src.pipeline.run_monthly import run_for_client
+from src.periods import schedule_day_of_month
+from src.pipeline.monthly_job import run_scheduled_monthly_job
 
 logger = logging.getLogger(__name__)
 
 
-def run_monthly_job() -> None:
-    period = Period.previous_complete()
-    logger.info("Running monthly job for %s", period.label)
-    for client in load_clients():
-        try:
-            run_for_client(client, period)
-        except Exception:  # noqa: BLE001
-            logger.exception("Report failed for %s", client.id)
+def _schedule_hour() -> int:
+    raw = (os.environ.get("SEO_REPORT_SCHEDULE_HOUR") or "6").strip()
+    try:
+        return max(0, min(23, int(raw)))
+    except ValueError:
+        return 6
+
+
+def _schedule_minute() -> int:
+    raw = (os.environ.get("SEO_REPORT_SCHEDULE_MINUTE") or "0").strip()
+    try:
+        return max(0, min(59, int(raw)))
+    except ValueError:
+        return 0
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO,
-                          format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s - %(message)s",
+    )
+    day = schedule_day_of_month()
+    hour = _schedule_hour()
+    minute = _schedule_minute()
     scheduler = BlockingScheduler()
-    scheduler.add_job(run_monthly_job,
-                       CronTrigger(day=5, hour=6, minute=0),
-                       id="monthly-seo-report",
-                       replace_existing=True)
-    logger.info("Scheduler started; reports will run on the 5th at 06:00")
+    scheduler.add_job(
+        run_scheduled_monthly_job,
+        CronTrigger(day=day, hour=hour, minute=minute),
+        id="monthly-seo-report",
+        replace_existing=True,
+    )
+    logger.info(
+        "Scheduler started; reports will run on day %s at %02d:%02d",
+        day,
+        hour,
+        minute,
+    )
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
