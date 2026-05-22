@@ -43,6 +43,7 @@ import re
 import sys
 import time
 import urllib.parse
+import calendar
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -75,6 +76,36 @@ _FR_MONTHS = [
     "janv.", "févr.", "mars", "avr.", "mai", "juin",
     "juil.", "août", "sept.", "oct.", "nov.", "déc.",
 ]
+
+
+def _report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
+    """First/last day of the report calendar month (GBP picker is month-based).
+
+    For report ``2026-04`` with cycle 26/03→26/04, GBP still uses **avril 2026**
+    only, not a mars→avr range in the month selector.
+    """
+    if not period_end or len(period_end) < 7:
+        return period_end, period_end
+    try:
+        year = int(period_end[:4])
+        month = int(period_end[5:7])
+    except ValueError:
+        return period_end, period_end
+    last = calendar.monthrange(year, month)[1]
+    return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
+
+
+def _dashboard_url_has_month(url: str, period_end: str) -> bool:
+    """True when saved Performance URL already targets the report month."""
+    if not url or not period_end or len(period_end) < 7:
+        return False
+    ym = period_end[:7]
+    return (
+        f"from={ym}" in url
+        or f"from%3D{ym}" in url
+        or f"to={ym}" in url
+        or f"to%3D{ym}" in url
+    )
 
 
 def _fr_month_year(iso_date: str) -> str | None:
@@ -1350,7 +1381,21 @@ def select_reporting_period(target: Page | Frame, period_start: str,
     if not period_start:
         start, end = _default_period()
         return select_reporting_period(target, start, end, auto_previous=True)
-    return select_date_range(target, period_start, period_end)
+
+    # Cycle window (e.g. 26 mars → 26 avr) spans two calendar months in the
+    # picker labels; GBP only supports whole months — use report month (M).
+    cal_start, cal_end = _report_calendar_month_bounds(period_end or period_start)
+    start_label = _fr_month_year(cal_start)
+    end_label = _fr_month_year(cal_end)
+    if period_start and period_end:
+        win_start = _fr_month_year(period_start)
+        win_end = _fr_month_year(period_end)
+        if win_start and win_end and win_start != win_end:
+            _log(
+                "date range: 26→26 window is %s → %s; GBP picker uses %s only.",
+                win_start, win_end, end_label or win_end,
+            )
+    return select_date_range(target, cal_start, cal_end)
 
 
 def _normalize_kpi_digits(raw: str | None) -> str | None:
@@ -2076,12 +2121,21 @@ def main() -> int:
             except Exception as exc:
                 _log(f"modal: debug screenshot failed: {exc}")
 
-        # 4) Date range (auto: Mois précédent = today’s month − 1).
+        # 4) Date range — calendar month of the report (not 26→26 in the picker).
         if dashboard_frame is not None:
-            select_reporting_period(
-                dashboard_frame, period_start, period_end,
-                auto_previous=auto_period,
+            cal_start, cal_end = _report_calendar_month_bounds(
+                period_end or period_start,
             )
+            if dash_url and _dashboard_url_has_month(dash_url, cal_end):
+                _log(
+                    "date range: dashboard URL already set to %s; skipping picker.",
+                    cal_end[:7],
+                )
+            else:
+                select_reporting_period(
+                    dashboard_frame, period_start, period_end,
+                    auto_previous=auto_period,
+                )
 
         # 5) Loop the tabs.
         if dashboard_frame is not None:
