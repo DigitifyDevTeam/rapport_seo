@@ -90,10 +90,33 @@ def _fr_month_year(iso_date: str) -> str | None:
     return f"{_FR_MONTHS[month - 1]} {year}"
 
 
+_REAL_CHROME_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
 def _apply_google_compat(context) -> None:
     context.add_init_script(
         """
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        // Spoof a few headless-detection signals Google checks.
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['fr-FR', 'fr', 'en-US', 'en'],
+        });
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5],
+        });
+        window.chrome = window.chrome || { runtime: {} };
+        const originalQuery = window.navigator.permissions &&
+            window.navigator.permissions.query;
+        if (originalQuery) {
+            window.navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters)
+            );
+        }
         """
     )
 
@@ -272,8 +295,19 @@ def open_gmb_app(page: Page, start_url: str = "") -> bool:
             continue
     _safe_wait_idle(page, timeout=20_000)
     time.sleep(2.0)
-    if "accounts.google.com/signin" in page.url:
-        _log("gmb: Google sign-in required — re-run gmb_ui_login.py.")
+    url_now = page.url or ""
+    if (
+        "accounts.google.com" in url_now
+        and ("/signin" in url_now or "accountchooser" in url_now
+             or "ServiceLogin" in url_now)
+    ):
+        _log(
+            "gmb: Google rejected the saved session (login wall). "
+            "This usually means the VPS IP differs from where the session "
+            "was captured. Re-capture on Windows AND copy the *.json from "
+            "outputs/_sessions/ to the VPS, OR set GMB_LOCATION_ID_<CLIENT> "
+            "in .env so the API can be used instead."
+        )
         return False
     return True
 
@@ -1756,20 +1790,26 @@ def _launch_browser_context(pw, args: argparse.Namespace,
         args=_docker_browser_args(),
     )
     viewport = {"width": 1600, "height": 900}
+    # Use a real Chrome UA so Google does not flag the session as headless.
+    ctx_common = dict(
+        viewport=viewport,
+        locale="fr-FR",
+        user_agent=_REAL_CHROME_UA,
+        timezone_id="Europe/Paris",
+    )
     if args.profile:
         profile_dir = Path(args.profile).resolve()
         profile_dir.mkdir(parents=True, exist_ok=True)
         context = pw.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
-            locale="fr-FR",
-            viewport=viewport,
+            **ctx_common,
             **launch_kw,
         )
         _apply_google_compat(context)
         page = context.pages[0] if context.pages else context.new_page()
         return context, None, page
     browser = pw.chromium.launch(**launch_kw)
-    ctx_kw: dict[str, Any] = dict(viewport=viewport, locale="fr-FR")
+    ctx_kw: dict[str, Any] = dict(**ctx_common)
     if storage_state:
         ctx_kw["storage_state"] = storage_state
     context = browser.new_context(**ctx_kw)
