@@ -1,0 +1,42 @@
+services:
+  seo-reports:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rapport-seo:latest
+    working_dir: /app
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./secrets:/app/secrets
+      - ./outputs:/app/outputs
+      - ./templates:/app/templates
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    shm_size: "2gb"
+    init: true
+    # Headless Chromium (Playwright + Puppeteer)
+    environment:
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+  # Interactive shell for one-time logins (GMB / Clarity sessions)
+  seo-tools:
+    profiles:
+      - tools
+    image: rapport-seo:latest
+    working_dir: /app
+    env_file:
+      - .env
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./secrets:/app/secrets
+      - ./outputs:/app/outputs
+      - ./templates:/app/templates
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    shm_size: "2gb"
+    init: true
+    stdin_open: true
+    tty: true
+    entrypoint: ["/bin/bash"]

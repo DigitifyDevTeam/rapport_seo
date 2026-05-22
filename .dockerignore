@@ -1,0 +1,14 @@
+.venv
+venv
+__pycache__
+*.pyc
+.git
+.idea
+.vscode
+node_modules
+outputs
+logs
+.env
+secrets
+*.pptx
+.DS_Store
