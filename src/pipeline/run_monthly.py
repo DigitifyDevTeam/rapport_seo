@@ -805,6 +805,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         or project_name
     )
     profile_dir = _gmb_ui_profile_dir(client)
+    # Windows Chrome profiles are not portable to Linux/Docker. Allow
+    # disabling profile use with SEO_REPORT_GMB_NO_PROFILE=1 (set by Dockerfile).
+    no_profile = (env("SEO_REPORT_GMB_NO_PROFILE") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    # Override the default 'chrome' channel (e.g. force 'chromium' in Docker).
+    channel = (env("SEO_REPORT_BROWSER_CHANNEL") or "").strip()
 
     json_out = output_dir / "gmb_ui.json"
     _backup_gmb_ui_if_good(json_out)
@@ -817,9 +824,11 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         "--screenshot", str(screenshot),
         "--project-name", project_name,
     ]
+    if channel:
+        cmd += ["--channel", channel]
     if not no_search:
         cmd.extend(["--business-name", search_query, "--location-name", location_name])
-    if profile_dir.is_dir():
+    if not no_profile and profile_dir.is_dir():
         cmd += ["--profile", str(profile_dir)]
     if period is not None:
         cmd += [

@@ -5,7 +5,9 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    SEO_REPORT_GMB_NO_PROFILE=1 \
+    SEO_REPORT_BROWSER_CHANNEL=chromium
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-impress \

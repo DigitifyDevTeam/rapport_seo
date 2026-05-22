@@ -120,7 +120,9 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--no-auto-period", action="store_true",
                          help="Do not use month−1 auto; require --period-start.")
     parser.add_argument("--channel", default="chrome",
-                         help="Browser channel (default: chrome).")
+                         help="Browser channel (default: chrome). Pass empty "
+                              "string or 'chromium' to use Playwright's "
+                              "bundled Chromium (recommended in Docker).")
     parser.add_argument("--screenshot", default="",
                          help="Optional full-page screenshot path.")
     parser.add_argument("--show", action="store_true",
@@ -1727,9 +1729,14 @@ def _default_period() -> tuple[str, str]:
 def _launch_browser_context(pw, args: argparse.Namespace,
                              storage_state: Any | None):
     """Return (context, browser_or_none, page)."""
+    # "" or "chromium" means: use Playwright's bundled Chromium (no system
+    # Chrome required). Useful in Docker containers.
+    channel = (args.channel or "").strip().lower()
+    if channel in ("", "chromium", "bundled"):
+        channel = None
     launch_kw = dict(
         headless=not args.show,
-        channel=args.channel or None,
+        channel=channel,
         ignore_default_args=["--enable-automation"],
         args=["--disable-blink-features=AutomationControlled"],
     )
