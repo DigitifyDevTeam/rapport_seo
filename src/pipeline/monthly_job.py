@@ -55,10 +55,20 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
+    # SEO_REPORT_SKIP_CONNECTORS=gmb,clarity skips browsers only; GMB/Clarity APIs
+    # still run. Use SEO_REPORT_SKIP_UI_CONNECTORS for the same browser skip.
     skip = (env("SEO_REPORT_SKIP_CONNECTORS") or "").strip()
     if skip:
-        _set_runtime_skip(skip)
-        logger.info("Skipping connectors (SEO_REPORT_SKIP_CONNECTORS): %s", skip)
+        api_only = ",".join(
+            part.strip()
+            for part in skip.split(",")
+            if part.strip().lower() not in ("gmb", "clarity"))
+        if api_only:
+            _set_runtime_skip(api_only)
+            logger.info(
+                "Skipping API connectors (SEO_REPORT_SKIP_CONNECTORS): %s",
+                api_only,
+            )
     return run_scheduled_monthly_job(args.month)
 
 

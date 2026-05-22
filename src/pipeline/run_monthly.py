@@ -37,10 +37,10 @@ from typing import Any
 import pandas as pd
 
 from src.charts import generate as charts
-from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, get_client,
-                          load_clients)
-from src.connectors import (ga4 as ga4_connector,
-                              gsc as gsc_connector)
+from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
+                          get_client, load_clients)
+from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
+                              gmb as gmb_connector, gsc as gsc_connector)
 from src.insights import generator as insights
 from src.periods import Period
 from src.pipeline.delivery import send_report
@@ -70,16 +70,13 @@ def _fetch_all(client: ClientConfig, period: Period) -> dict[str, Any]:
                 if "ga4" not in skip else normalize.normalize_ga4({})),
         "gsc": (normalize.normalize_gsc(gsc_connector.fetch(client, start, end))
                 if "gsc" not in skip else normalize.normalize_gsc({})),
-        # Google Business Profile: KPIs and charts come only from the
-        # Playwright flow (``gmb_ui_extract.py``) plus OCR on ``gmb_card_*.png``.
-        # The Performance API is not used here.
-        "gmb": {},
-        # Clarity is captured from the dashboard UI (Puppeteer). The Clarity
-        # Data Export API is intentionally not called from the pipeline: it is
-        # capped at 10 requests/day/project and only returns the last 1-3 days
-        # of data, neither of which fits a monthly report. See
-        # ``_capture_clarity_ui`` and ``scripts/clarity_ui_extract.js``.
-        "clarity": {},
+        # GMB: UI screenshots when available; Performance API fills KPIs/charts
+        # when Playwright cannot run (e.g. shared VPS without system libraries).
+        "gmb": (gmb_connector.fetch(client, start, end)
+                if "gmb" not in skip else {}),
+        # Clarity: dashboard UI is primary; API is a text-metrics fallback only.
+        "clarity": (clarity_connector.fetch(client, start, end)
+                    if "clarity" not in skip else {}),
     }
 
 
@@ -92,6 +89,24 @@ def _disabled_connectors(client: ClientConfig) -> set[str]:
     for name in ("ga4", "gsc", "gmb", "clarity"):
         section = getattr(client, name, None) or {}
         if isinstance(section, dict) and section.get("enabled") is False:
+            skip.add(name)
+    return skip
+
+
+def _ui_capture_disabled(client: ClientConfig) -> set[str]:
+    """Browser-based GMB/Clarity capture only (not API fallbacks)."""
+    skip = set()
+    raw = (
+        env("SEO_REPORT_SKIP_UI_CONNECTORS")
+        or env("SEO_REPORT_SKIP_CONNECTORS")
+        or ""
+    ).strip()
+    if raw:
+        skip.update(part.strip().lower()
+                    for part in raw.split(",") if part.strip())
+    for name in ("gmb", "clarity"):
+        section = getattr(client, name, None) or {}
+        if isinstance(section, dict) and section.get("ui_enabled") is False:
             skip.add(name)
     return skip
 
@@ -192,6 +207,11 @@ def _build_report_data(client: ClientConfig, period: Period,
         s = str(val).strip()
         if s:
             gmb_ui_kpis[key] = s
+    for key, val in _gmb_kpis_from_daily(
+            current.get("gmb", {}).get("daily", pd.DataFrame())).items():
+        if val and (not gmb_ui_kpis.get(key)
+                    or str(gmb_ui_kpis.get(key)).strip().lower() == "n/a"):
+            gmb_ui_kpis[key] = val
     chart_paths = {
         "chart_ga4_traffic": str(charts.ga4_traffic_overview(
             current.get("ga4", {}).get("organic_daily", pd.DataFrame()),
@@ -405,17 +425,24 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     Node is not available. The pipeline never calls the Clarity Data Export
     API (capped at 10/day and limited to last 1-3 days).
     """
-    skip = _disabled_connectors(client)
-    if "clarity" in skip:
+    if "clarity" in _ui_capture_disabled(client):
+        return
+
+    json_out = output_dir / "clarity_ui.json"
+    if not refresh and _clarity_capture_complete(client, output_dir, period):
+        logger.info(
+            "[clarity-ui] reusing existing captures in %s (no browser)",
+            output_dir,
+        )
         return
 
     session_path = _CLARITY_UI_SESSIONS_DIR / f"clarity-{client.id}.json"
     if not session_path.exists():
         logger.warning(
-            "[clarity-ui] no saved session at %s — Clarity slide will show n/a. "
-            "Run once: `node scripts/clients/%s/clarity_ui_login.js` "
-            "(or `node scripts/clarity_ui_login.js --out %s`).",
-            session_path, client.id, session_path,
+            "[clarity-ui] no saved session at %s — widget PNGs need a Windows "
+            "capture or copy outputs/%s/%s/clarity_* from your PC. Text metrics "
+            "may still come from CLARITY_API_TOKEN.",
+            session_path, client.id, period.label,
         )
         return
     if not _CLARITY_UI_EXTRACT_SCRIPT.exists():
@@ -428,14 +455,6 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             "[clarity-ui] `node` not found in PATH; skipping dashboard "
             "capture. Install Node.js or run scripts/clarity_ui_extract.js "
             "manually.")
-        return
-
-    json_out = output_dir / "clarity_ui.json"
-    if not refresh and _clarity_capture_complete(client, output_dir, period):
-        logger.info(
-            "[clarity-ui] reusing existing captures in %s (no browser)",
-            output_dir,
-        )
         return
 
     screenshot = output_dir / "clarity_dashboard.png"
@@ -580,6 +599,36 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _gmb_kpis_from_daily(df: pd.DataFrame) -> dict[str, str]:
+    """Build GBP tab KPI strings from the Performance API daily dataframe."""
+    if df.empty:
+        return {}
+    out: dict[str, str] = {}
+    metric_cols = (
+        ("calls", "calls"),
+        ("directions", "directions"),
+        ("website_clicks", "website_clicks"),
+    )
+    totals: list[float] = []
+    for col, key in metric_cols:
+        if col not in df.columns:
+            continue
+        total = float(df[col].sum())
+        totals.append(total)
+        out[key] = f"{int(round(total)):,}"
+    if totals:
+        out["overview"] = f"{int(round(sum(totals))):,}"
+    return out
+
+
+def _gmb_ui_assets_ready(output_dir: Path) -> bool:
+    """True when synced UI files exist (no browser required)."""
+    gmb_ui = _load_gmb_ui(output_dir)
+    if _resolve_gmb_ui_kpis(gmb_ui):
+        return True
+    return (output_dir / "gmb_card_overview.png").is_file()
+
+
 def _gmb_commentary(df: pd.DataFrame,
                     gmb_ui: dict[str, Any] | None = None,
                     kpi_strings: dict[str, str] | None = None) -> str:
@@ -708,33 +757,27 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     Writes ``gmb_ui.json``, ``gmb_business_card.png``, and ``gmb_card_*.png``
     next to the report. Returns True when at least one KPI was captured.
     """
-    skip = _disabled_connectors(client)
-    if "gmb" in skip:
+    if "gmb" in _ui_capture_disabled(client):
         return False
 
     gmb_cfg = getattr(client, "gmb", None) or {}
     session_path = _GMB_UI_SESSIONS_DIR / f"gmb-{client.id}.json"
-    if gmb_cfg.get("ui_manual_capture"):
+    if gmb_cfg.get("ui_manual_capture") or _gmb_ui_assets_ready(output_dir):
         existing = _load_gmb_ui(output_dir)
-        if _resolve_gmb_ui_kpis(existing):
+        if _resolve_gmb_ui_kpis(existing) or _gmb_ui_assets_ready(output_dir):
             logger.info(
-                "[gmb-ui] manual capture already present in %s — skipping "
-                "automated browser (run scripts/clients/%s/gmb_ui_capture.py "
-                "to refresh).",
-                output_dir / "gmb_ui.json",
-                client.id,
+                "[gmb-ui] using existing UI assets in %s (no browser)",
+                output_dir,
             )
             return True
     if not session_path.exists():
         logger.warning(
-            "[gmb-ui] no saved session at %s — GMB slides will show n/a. "
-            "Run once: `python scripts/clients/%s/gmb_ui_login.py` "
-            "(or `python %s --out %s --profile %s`).",
+            "[gmb-ui] no saved session at %s — KPIs can still come from the "
+            "GMB API; for dashboard PNGs run login on Windows and copy "
+            "outputs/_sessions/ and outputs/%s/%s/gmb_* to the server.",
             session_path,
             client.id,
-            _GMB_UI_LOGIN_SCRIPT,
-            session_path,
-            _gmb_ui_profile_dir(client),
+            period.label if period is not None else "YYYY-MM",
         )
         return False
     if not _GMB_UI_EXTRACT_SCRIPT.exists():
