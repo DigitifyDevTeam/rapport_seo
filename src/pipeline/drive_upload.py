@@ -142,6 +142,20 @@ def _upload_file(service, local_path: Path, parent_id: str) -> str | None:
     return file_id
 
 
+def artifacts_for_period(client: ClientConfig, period: Period) -> ReportArtifacts:
+    """Rebuild artifact paths for a client/month already written under outputs/."""
+    output_dir = client.output_dir / period.label
+    pptx_path = output_dir / f"{client.id}_{period.label}_report.pptx"
+    data_path = output_dir / "report_data.json"
+    pdf_path = output_dir / f"{client.id}_{period.label}_report.pdf"
+    return ReportArtifacts(
+        output_dir=output_dir,
+        data_path=data_path,
+        pptx_path=pptx_path,
+        pdf_path=pdf_path if pdf_path.is_file() else None,
+    )
+
+
 def upload_report_artifacts(
     client: ClientConfig,
     period: Period,
