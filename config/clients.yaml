@@ -126,6 +126,8 @@ clients:
       ui_project_name: "Origin"
       # Fallback Google Search query if GBP list does not open Performance.
       ui_search_query: "Origine CBD Paris"
+      # Used when automated capture saves an organic snippet instead of the panel.
+      business_card_reference: scripts/clients/origincbd/gmb_business_card_reference.png
     clarity:
       project_id: "iqfjm1ewdj"
     delivery:

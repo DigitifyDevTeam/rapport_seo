@@ -165,6 +165,69 @@ def _ocr_region(pytesseract: Any, pil_img: Image.Image, psm: int) -> str:
         return pytesseract.image_to_string(pil_img, lang="eng", config=cfg)
 
 
+def ocr_text_from_png(path: Path, *, psm: int = 6) -> str:
+    """OCR full text from a screenshot (French + English, no digit whitelist)."""
+    if not path.is_file():
+        return ""
+    tess_bin = _tesseract_executable()
+    try:
+        import pytesseract as pt
+    except ImportError:
+        pt = None
+    if pt is None and not tess_bin:
+        return ""
+    if pt is not None:
+        _configure_tesseract_cmd()
+    try:
+        img = Image.open(path).convert("RGB")
+    except OSError:
+        return ""
+    w, h = img.size
+    if w < 80 or h < 40:
+        return ""
+    scaled = img.resize((w * 2, h * 2), Image.Resampling.LANCZOS)
+    if pt is not None and _tesseract_executable():
+        try:
+            return pt.image_to_string(scaled, lang="fra+eng", config=f"--oem 3 --psm {psm}")
+        except Exception:
+            try:
+                return pt.image_to_string(scaled, lang="eng", config=f"--oem 3 --psm {psm}")
+            except Exception:
+                pass
+    if tess_bin:
+        tmp_path = Path(tempfile.gettempdir()) / f"gmb_ocr_full_{os.getpid()}.png"
+        try:
+            scaled.save(tmp_path, format="PNG")
+            for lang in ("fra+eng", "eng"):
+                args = [
+                    tess_bin,
+                    str(tmp_path),
+                    "-",
+                    "--oem",
+                    "3",
+                    "--psm",
+                    str(psm),
+                    "-l",
+                    lang,
+                ]
+                proc = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    timeout=90,
+                )
+                if proc.returncode == 0 and (proc.stdout or "").strip():
+                    return proc.stdout or ""
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return ""
+
+
 def headline_int_from_chart_png(path: Path) -> str | None:
     """Return a formatted integer string (e.g. ``702``) or ``None`` if OCR fails."""
     global _WARNED_NO_TESS, _WARNED_NO_PYTESSERACT

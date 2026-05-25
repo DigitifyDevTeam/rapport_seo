@@ -45,6 +45,10 @@ from src.insights import generator as insights
 from src.periods import Period
 from src.pipeline.delivery import send_report
 from src.reporting.export_pdf import export as export_pdf
+from src.reporting.gmb_business_card import (
+    ensure_valid_business_card,
+    is_valid_public_fiche_png,
+)
 from src.reporting.gmb_card_ocr import extract_gmb_kpis_from_chart_paths
 from src.reporting.pptx_report import render as render_pptx
 from src.transform import normalize
@@ -54,7 +58,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v3"
+GMB_UI_CAPTURE_VERSION = "calmonth-v4-public-fiche"
 
 
 @dataclass
@@ -662,6 +666,13 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
         return False
     if gmb_ui.get("report_month") != period.label:
         return False
+    card = output_dir / "gmb_business_card.png"
+    if card.is_file() and not is_valid_public_fiche_png(card):
+        logger.info(
+            "[gmb-ui] stale/invalid business card in %s — will re-capture",
+            output_dir,
+        )
+        return False
     return True
 
 
@@ -1019,6 +1030,13 @@ def _resolve_gmb_ui_charts(gmb_ui: dict[str, Any] | None,
         candidate = output_dir / filename
         if candidate.exists():
             out[key] = str(candidate)
+
+    business = out.get("business_card")
+    if business and not is_valid_public_fiche_png(Path(business)):
+        logger.warning(
+            "[gmb-ui] dropping invalid business_card image: %s", business,
+        )
+        out.pop("business_card", None)
     return out
 
 
@@ -1084,6 +1102,7 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     )
     if "gmb" not in _disabled_connectors(client):
         _capture_gmb_ui(client, output_dir, period)
+    ensure_valid_business_card(output_dir, client_id=client.id)
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
     _log_fetch_summary(client.id, current)

@@ -68,7 +68,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v3"
+GMB_UI_CAPTURE_VERSION = "calmonth-v4-public-fiche"
 
 DATE_PRESET_LABELS = [
     "Mois précédent", "Mois dernier", "Le mois dernier",
@@ -491,6 +491,25 @@ def _ensure_search_page_for_fiche(page: Page, search_query: str) -> bool:
     return "google.com/search" in (page.url or "") and "#mpd=" not in (page.url or "")
 
 
+def _validate_saved_public_fiche(out_path: Path) -> bool:
+    try:
+        from src.reporting.gmb_business_card import is_valid_public_fiche_png
+    except ImportError:
+        return out_path.is_file()
+    return is_valid_public_fiche_png(out_path)
+
+
+def _screenshot_clip(page: Page, out_path: Path, clip: dict[str, float]) -> bool:
+    if clip.get("width", 0) < 280:
+        return False
+    try:
+        page.screenshot(path=str(out_path), clip=clip)
+        return out_path.is_file()
+    except Exception as exc:
+        _log(f"public fiche: screenshot failed: {exc}")
+        return False
+
+
 def screenshot_public_fiche(
     page: Page,
     out_path: Path,
@@ -499,27 +518,62 @@ def screenshot_public_fiche(
 ) -> str | None:
     """Screenshot the public GBP fiche on Google Search (not the owner dashboard)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _ensure_search_page_for_fiche(page, search_query):
-        _log("public fiche: not on a clean Search page.")
+
+    def _try_search_page() -> str | None:
+        if not _ensure_search_page_for_fiche(page, search_query):
+            _log("public fiche: not on a clean Search page.")
+            return None
+        try:
+            clip = page.evaluate(KNOWLEDGE_PANEL_CLIP_JS)
+        except Exception as exc:
+            _log(f"public fiche: evaluate failed: {exc}")
+            clip = None
+        if not clip:
+            _log("public fiche: knowledge panel not found on search page.")
+            return None
+        if not _screenshot_clip(page, out_path, clip):
+            return None
+        if _validate_saved_public_fiche(out_path):
+            _log(f"public fiche: saved {out_path.name}")
+            return str(out_path)
+        _log("public fiche: search capture rejected (organic snippet?).")
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
-    try:
-        clip = page.evaluate(KNOWLEDGE_PANEL_CLIP_JS)
-    except Exception as exc:
-        _log(f"public fiche: evaluate failed: {exc}")
-        clip = None
-    if not clip:
-        _log("public fiche: knowledge panel not found on search page.")
+
+    def _try_maps_page() -> str | None:
+        if not search_query or not open_maps_search(page, search_query):
+            return None
+        try:
+            clip = page.evaluate(MAPS_PANEL_CLIP_JS)
+        except Exception as exc:
+            _log(f"public fiche maps: evaluate failed: {exc}")
+            clip = None
+        if not clip or not _screenshot_clip(page, out_path, clip):
+            return None
+        if _validate_saved_public_fiche(out_path):
+            _log(f"public fiche: saved from Maps -> {out_path.name}")
+            return str(out_path)
+        _log("public fiche: maps capture rejected.")
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         return None
-    if clip.get("width", 0) < 280:
-        _log(f"public fiche: clip too narrow ({clip.get('width')}), skipping.")
-        return None
-    try:
-        page.screenshot(path=str(out_path), clip=clip)
-        _log(f"public fiche: saved {out_path.name}")
-        return str(out_path)
-    except Exception as exc:
-        _log(f"public fiche: screenshot failed: {exc}")
-        return None
+
+    if search_query and open_search(page, search_query):
+        shot = _try_search_page()
+        if shot:
+            return shot
+    if search_query:
+        shot = _try_maps_page()
+        if shot:
+            return shot
+    if _ensure_search_page_for_fiche(page, search_query):
+        return _try_search_page()
+    return None
 
 
 # -----------------------------------------------------------------------------
@@ -581,8 +635,10 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
     if (height < 260) return null;
     const w = Math.min(rootRect.width, window.innerWidth - rootRect.left);
     if (w < 280) return null;
+    const x = Math.max(0, rootRect.left);
+    if (x < window.innerWidth * 0.38) return null;
     return {
-      x: Math.max(0, rootRect.left),
+      x: x,
       y: Math.max(0, topY),
       width: w,
       height: Math.min(height, window.innerHeight - topY),
@@ -611,6 +667,49 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
   return null;
 }
 """
+
+
+MAPS_PANEL_CLIP_JS = r"""
+() => {
+  const markers = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web|Appeler|gérez cette fiche/i;
+  const roots = [
+    'div[role="main"]',
+    'div.m6QErb',
+    'div[aria-label*="Origine"]',
+    'div[aria-label*="CBD"]',
+  ];
+  for (const sel of roots) {
+    const el = document.querySelector(sel);
+    if (!el) continue;
+    const text = (el.innerText || '');
+    if (!markers.test(text)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 280 || rect.height < 220) continue;
+    return {
+      x: Math.max(0, rect.left),
+      y: Math.max(0, rect.top),
+      width: Math.min(rect.width, window.innerWidth - rect.left),
+      height: Math.min(rect.height, window.innerHeight - rect.top),
+    };
+  }
+  return null;
+}
+"""
+
+
+def open_maps_search(page: Page, query: str) -> bool:
+    if not query:
+        return False
+    encoded = urllib.parse.quote(query)
+    url = f"https://www.google.com/maps/search/{encoded}?hl=fr"
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    except Exception as exc:
+        _log(f"maps: navigation failed: {exc}")
+        return False
+    _safe_wait_idle(page, timeout=20_000)
+    time.sleep(3.0)
+    return True
 
 
 def open_search(page: Page, query: str) -> bool:
