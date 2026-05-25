@@ -31,9 +31,29 @@ Expect: `[OK] deepcleaning: OK (#mpd= in gmb-deepcleaning.json)`
 
 ## One-time: copy session to VPS
 
-Upload via FileZilla (after `./scripts/fix_outputs_perms.sh` if permission denied):
+If FileZilla says **permission denied** under `outputs/` (Docker created files as root):
 
-- `outputs/_sessions/gmb-deepcleaning.json` → same path on the server
+**A — Import folder (recommended)**
+
+1. On the VPS: `mkdir -p ~/gmb_sessions_import`
+2. FileZilla upload to **`/home/new/gmb_sessions_import/`** (your home — always writable):
+   - `gmb-deepcleaning.json`
+   - `gmb-digitify.json` (if needed)
+3. SSH:
+
+```bash
+cd ~/public_html/rapport_seo
+chmod +x scripts/import_gmb_sessions.sh scripts/fix_outputs_perms.sh
+./scripts/import_gmb_sessions.sh
+```
+
+**B — Fix permissions then upload directly**
+
+```bash
+./scripts/fix_outputs_perms.sh
+```
+
+Then upload to `public_html/rapport_seo/outputs/_sessions/`.
 
 Do **not** use `docker_gmb_prepare.sh` on the VPS (browser login on OVH fails).
 

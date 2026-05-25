@@ -17,8 +17,14 @@ HOST_GID="$(id -g)"
 
 echo "Reclaiming outputs/ + logs/ for UID=${HOST_UID} GID=${HOST_GID} ..."
 docker compose run --rm --no-TTY --user 0:0 --entrypoint sh seo-reports -c "
+  mkdir -p /app/outputs/_sessions
   chown -R ${HOST_UID}:${HOST_GID} /app/outputs /app/logs 2>/dev/null || true
-  chmod -R u+rwX,g+rX /app/outputs /app/logs 2>/dev/null || true
+  chmod -R u+rwX,g+rwX,o+rX /app/outputs /app/logs 2>/dev/null || true
   echo 'OK'
 "
-echo "Done. SFTP / scp uploads should now work."
+mkdir -p "${ROOT}/outputs/_sessions" "${HOME}/gmb_sessions_import"
+chmod 775 "${ROOT}/outputs" "${ROOT}/outputs/_sessions" 2>/dev/null || true
+echo "Done."
+echo "If FileZilla still denies writes under outputs/, upload sessions to:"
+echo "  ${HOME}/gmb_sessions_import/"
+echo "Then run: ./scripts/import_gmb_sessions.sh"
