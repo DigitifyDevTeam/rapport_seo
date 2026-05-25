@@ -69,6 +69,9 @@ clients:
       ui_prefer_gmb_app: true
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
+      ui_project_aliases:
+        - "Digitify.fr"
+        - "digitify.fr"
     clarity:
       project_id: "k23l3ye7zj"
       ui_skip_widgets:
@@ -101,6 +104,10 @@ clients:
       # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
+      ui_project_aliases:
+        - "DeepCleaning"
+        - "deepcleaning.fr"
+        - "Lavage et nettoyage professionnel"
     clarity:
       project_id: "lfjtuxge3c"
       # No e-commerce: skip Produits populaires widget + PPT column (Origincbd unchanged).

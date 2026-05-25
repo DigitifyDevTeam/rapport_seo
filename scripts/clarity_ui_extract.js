@@ -191,9 +191,11 @@ function resolveCardCaptures(skipWidgetIds) {
     if (c.id === "popular_pages" && skip.has("popular_products")) {
       return {
         id: "popular_pages",
-        anchorTabs: ["Pages supérieures"],
+        anchorTabs: ["Pages supérieures", "Pages inactives"],
         activeTab: "Pages supérieures",
+        tabIndex: 0,
         wideAnchor: true,
+        exactTabMatch: true,
       };
     }
     return { ...c };
@@ -460,7 +462,7 @@ async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options 
 function tabLabelsForTarget(target) {
   const primary = [target.activeTab, ...(target.altActiveTabs || [])].filter(Boolean);
   if (target.id === "popular_pages") {
-    return [...primary, "Top pages", "Pages", "Page"];
+    return [...primary, "Top pages"];
   }
   if (target.id === "popular_products") {
     return [...primary, "Popular products", "Top products"];
@@ -482,12 +484,14 @@ async function clickTabByIndexOnCard(page, cardHandle, tabIndex) {
       "top pages",
       "popular products",
     ]);
+    const blocked = /inactives?|inactive|sans trafic/i;
     const cardRect = card.getBoundingClientRect();
     const tabs = [];
     for (const el of card.querySelectorAll('[role="tab"], button, a, span, div')) {
       const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
       if (!raw || raw.length > 40) continue;
       const key = norm(raw);
+      if (blocked.test(key)) continue;
       if (!allowed.has(key)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) continue;
@@ -515,15 +519,25 @@ async function clickTabByIndexOnCard(page, cardHandle, tabIndex) {
   return true;
 }
 
-async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = []) {
+function isInactivePagesTabLabel(key) {
+  return /inactives?|inactive|sans trafic/i.test(key || "");
+}
+
+async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = [], options = {}) {
   const labels = [tabLabel, ...altLabels].filter(Boolean);
-  const tabRect = await cardHandle.evaluate((card, labelsArg) => {
+  const exactOnly = Boolean(options.exactTabMatch);
+  const tabRect = await cardHandle.evaluate(
+    (card, labelsArg, exact) => {
     function norm(t) {
       return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
     }
     function labelMatches(key, wanted) {
+      if (/inactives?|inactive|sans trafic/i.test(key)) return false;
+      if (exact) {
+        return wanted.some((w) => key === w);
+      }
       return wanted.some(
-        (w) => key === w || key.includes(w) || w.includes(key),
+        (w) => key === w || (w.length >= 10 && key.includes(w)) || (key.length >= 10 && w.includes(key)),
       );
     }
     const wanted = labelsArg.map((l) => norm(l));
@@ -554,7 +568,10 @@ async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = []) {
       return a.area - b.area;
     });
     return tabCandidates[0] || null;
-  }, labels);
+  },
+    labels,
+    exactOnly,
+  );
 
   if (!tabRect) return false;
 
@@ -787,14 +804,15 @@ async function prepareWidgetCard(page, target, existingCard = null) {
 
   const tabLabels = tabLabelsForTarget(target);
   const altOnly = tabLabels.slice(1);
+  const tabOpts = { exactTabMatch: Boolean(target.exactTabMatch) };
   let tabOk = false;
-  const maxAttempts = target.id === "popular_products" ? 4 : 2;
+  const maxAttempts = target.id === "popular_products" ? 4 : 3;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (typeof target.tabIndex === "number") {
       tabOk = await clickTabByIndexOnCard(page, card, target.tabIndex);
     }
     if (!tabOk) {
-      tabOk = await clickTabOnCard(page, card, target.activeTab, altOnly);
+      tabOk = await clickTabOnCard(page, card, target.activeTab, altOnly, tabOpts);
     }
     if (!tabOk) break;
     await new Promise((r) => setTimeout(r, 1200));
@@ -833,6 +851,27 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   }
 
   await new Promise((r) => setTimeout(r, target.id === "popular_products" ? 3500 : 2500));
+
+  if (target.id === "popular_pages") {
+    const showsTopPages = await card.evaluate(() => {
+      const t = (document.body.innerText || "").toLowerCase();
+      if (t.includes("pages sans trafic") || t.includes("0 pages sans trafic")) {
+        return false;
+      }
+      if (t.includes("pages inactives") && !t.includes("pages supérieures")) {
+        return false;
+      }
+      return true;
+    });
+    if (!showsTopPages) {
+      console.warn(
+        "[card:popular_pages] inactive tab detected — forcing Pages supérieures (index 0)",
+      );
+      await clickTabByIndexOnCard(page, card, 0);
+      await clickTabOnCard(page, card, "Pages supérieures", ["Top pages"], tabOpts);
+      await new Promise((r) => setTimeout(r, 2800));
+    }
+  }
 
   if (target.id === "popular_products") {
     const productsActive = await isTabActiveOnCard(

@@ -1073,13 +1073,23 @@ def _click_performance_in_gmb_app(page: Page) -> bool:
     return False
 
 
-def open_performance_overlay(page: Page) -> Page | None:
+def open_performance_overlay(
+    page: Page,
+    *,
+    search_query: str = "",
+    dash_url: str = "",
+) -> Page | None:
     """Click "X interactions avec les clients" (GBP location or Knowledge Panel).
 
     Returns the page where the Performance dashboard ended up — either the
     current page (overlay opened in place) or a new tab/popup Google spawned.
     Returns None if the click failed.
     """
+    if "google.com/maps" in (page.url or ""):
+        _log("overlay: on Google Maps — returning to Search before Performance.")
+        _return_to_search_for_performance(
+            page, search_query=search_query, dash_url=dash_url,
+        )
     if _search_is_blocked(page):
         _log("overlay: skipped — page is Google CAPTCHA / sorry.")
         return None
@@ -2170,55 +2180,14 @@ def main() -> int:
         dash_url = (args.dashboard_url or "").strip() or saved_url
 
         def _capture_from_gmb_app() -> Page | None:
-            if not open_gmb_app(page, dash_url):
+            """Open GBP app, select location, then Performance (fiche screenshot later)."""
+            start = dash_url if dash_url and "business.google.com" in dash_url else ""
+            if not open_gmb_app(page, start):
                 return None
             if primary or alias_only:
                 select_gmb_project(page, primary, alias_only)
                 if not _ensure_on_gmb_app(page):
                     select_gmb_project(page, primary, alias_only)
-            # Open Performance while still on business.google.com (do not jump to
-            # Search first — that drops the in-app Performance entry point).
-            dashboard = open_performance_overlay(page)
-            if dashboard is not None:
-                if not args.no_search and search_query:
-                    gmb_page = page
-                    if open_search(gmb_page, search_query) and not _search_is_blocked(
-                        gmb_page,
-                    ):
-                        shot = capture_public_fiche_then_restore_search(
-                            gmb_page,
-                            business_card_out,
-                            search_query=search_query,
-                            dash_url=dash_url,
-                        )
-                        if shot:
-                            charts["business_card"] = shot
-                        _return_to_search_for_performance(
-                            gmb_page,
-                            search_query=search_query,
-                            dash_url=dash_url,
-                        )
-                return dashboard
-            if not args.no_search:
-                if not charts.get("business_card") and search_query:
-                    if open_search(page, search_query) and not _search_is_blocked(page):
-                        shot = capture_public_fiche_then_restore_search(
-                            page,
-                            business_card_out,
-                            search_query=search_query,
-                            dash_url=dash_url,
-                        )
-                        if shot:
-                            charts["business_card"] = shot
-                if charts.get("business_card") is None and search_query:
-                    shot = capture_public_fiche_then_restore_search(
-                        page,
-                        business_card_out,
-                        search_query=search_query,
-                        dash_url=dash_url,
-                    )
-                    if shot:
-                        charts["business_card"] = shot
             return open_performance_overlay(page)
 
         # 0) Direct Performance URL saved at login (#mpd=).
@@ -2228,18 +2197,13 @@ def main() -> int:
                 _safe_wait_idle(page, timeout=25_000)
                 time.sleep(2.0)
                 if not _search_is_blocked(page):
-                    dashboard_page = open_performance_overlay(page)
+                    dashboard_page = open_performance_overlay(
+                        page,
+                        search_query=search_query,
+                        dash_url=dash_url,
+                    )
                     if dashboard_page is None and "#mpd=" in (page.url or ""):
                         dashboard_page = page
-                    if not charts.get("business_card"):
-                        capture_public_fiche_then_restore_search(
-                            page,
-                            business_card_out,
-                            search_query=search_query,
-                            dash_url=dash_url,
-                        )
-                        if business_card_out.is_file():
-                            charts["business_card"] = str(business_card_out)
             except Exception as exc:
                 _log(f"dashboard-url: navigation failed: {exc}")
 
@@ -2256,18 +2220,13 @@ def main() -> int:
                 _safe_wait_idle(page, timeout=25_000)
                 time.sleep(2.0)
                 if not _search_is_blocked(page):
-                    dashboard_page = open_performance_overlay(page)
+                    dashboard_page = open_performance_overlay(
+                        page,
+                        search_query=search_query,
+                        dash_url=dash_url,
+                    )
                     if dashboard_page and "#mpd=" in (dashboard_page.url or ""):
                         _log("session: Performance opened; re-save prepare URL with #mpd=.")
-                    if not charts.get("business_card"):
-                        capture_public_fiche_then_restore_search(
-                            page,
-                            business_card_out,
-                            search_query=search_query,
-                            dash_url=dash_url,
-                        )
-                        if business_card_out.is_file():
-                            charts["business_card"] = str(business_card_out)
             except Exception as exc:
                 _log(f"session-url: navigation failed: {exc}")
 
@@ -2275,18 +2234,16 @@ def main() -> int:
         if dashboard_page is None and args.prefer_gmb_app:
             dashboard_page = _capture_from_gmb_app()
 
-        # B) Google Search → fiche screenshot → « X interactions » (Origincbd / CC Habitat).
+        # B) Google Search → Performance first (fiche screenshot after KPIs).
         if dashboard_page is None and search_query and open_search(page, search_query):
-            _log("search: capturing public fiche (right panel) before Performance.")
-            shot = capture_public_fiche_then_restore_search(
+            _log("search: opening Performance from knowledge panel.")
+            dashboard_page = open_performance_overlay(
                 page,
-                business_card_out,
                 search_query=search_query,
                 dash_url=dash_url,
             )
-            if shot:
-                charts["business_card"] = shot
-            dashboard_page = open_performance_overlay(page)
+            if dashboard_page is None and "#mpd=" in (page.url or ""):
+                dashboard_page = page
 
         # C) Fallback: business.google.com.
         if dashboard_page is None and not args.prefer_gmb_app:
@@ -2356,6 +2313,22 @@ def main() -> int:
             except ImportError:
                 pass
 
+        # 6) Public fiche (after Performance KPIs — Maps must not block overlay).
+        if not charts.get("business_card") and not args.no_search and search_query:
+            card_page = page if _page_alive(page) else dashboard_page
+            if card_page is not None:
+                _log("post-capture: public fiche screenshot")
+                shot = capture_public_fiche_then_restore_search(
+                    card_page,
+                    business_card_out,
+                    search_query=search_query,
+                    dash_url=dash_url,
+                )
+                if shot:
+                    charts["business_card"] = shot
+                elif business_card_out.is_file():
+                    charts["business_card"] = str(business_card_out.resolve())
+
         if args.screenshot:
             full_path = Path(args.screenshot).resolve()
             full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2376,6 +2349,13 @@ def main() -> int:
                     final_url = ""
                 if final_url:
                     break
+        resolved_charts: dict[str, str | None] = {}
+        for key, raw in charts.items():
+            if raw:
+                resolved_charts[key] = str(Path(str(raw)).resolve())
+            else:
+                resolved_charts[key] = raw
+
         cal_start, cal_end = _report_calendar_month_bounds(
             period_end or period_start,
         )
@@ -2391,7 +2371,7 @@ def main() -> int:
             "calendar_month_start": cal_start,
             "calendar_month_end": cal_end,
             "kpis": kpis,
-            "charts": charts,
+            "charts": resolved_charts,
         }
 
         if not kpis and out_path.exists():
