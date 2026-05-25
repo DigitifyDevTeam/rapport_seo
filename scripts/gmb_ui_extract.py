@@ -539,6 +539,8 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
   const performanceMarkers =
     /Rendez-vous:|Envoyer sur votre|Recevez plus d'avis|Ajouter une photo|Vue d.ensemble|Performances?/i;
   const publicSignals = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web|Appeler|Avis ·/i;
+  const organicSnippet =
+    /https?:\/\/|Boutique CBD \| CBD Shop|Fleurs CBD, Huiles CBD/i;
 
   function clipFromRoot(root) {
     if (!root) return null;
@@ -547,7 +549,10 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
     const text = (root.innerText || '');
     if (performanceMarkers.test(text)) return null;
     const hits = (text.match(publicSignals) || []).length;
-    if (hits < 1 && !root.querySelector('img')) return null;
+    if (hits < 2) return null;
+    if (organicSnippet.test(text) && !/avis Google|Ouvert ·|Vous gérez cette fiche/i.test(text)) {
+      return null;
+    }
 
     let cutY = rootRect.bottom;
     for (const el of root.querySelectorAll('*')) {
@@ -594,21 +599,14 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
 
   const candidates = [
     'div.kp-wholepage',
-    'div[role="complementary"]',
     'div.knowledge-panel',
     'div.osrp-blk',
-    '[data-attrid="kc:/local:one_line_summary"]',
   ];
   for (const sel of candidates) {
     const el = document.querySelector(sel);
     if (!el) continue;
     const clip = clipFromRoot(el);
     if (clip) return clip;
-    const rect = el.getBoundingClientRect();
-    if (rect.width > 220 && rect.height > 260) {
-      return { x: Math.max(0, rect.left), y: Math.max(0, rect.top),
-                width: rect.width, height: rect.height };
-    }
   }
   return null;
 }
