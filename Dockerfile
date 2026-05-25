@@ -16,6 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr-fra \
     nodejs \
     npm \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt package.json package-lock.json ./

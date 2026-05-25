@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -199,7 +200,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True, help="Session JSON output path")
     parser.add_argument("--profile", default="", help="Persistent Chrome profile dir")
-    parser.add_argument("--channel", default="chrome", help="chrome | msedge")
+    default_channel = (os.environ.get("SEO_REPORT_BROWSER_CHANNEL") or "chrome").strip()
+    parser.add_argument(
+        "--channel",
+        default=default_channel or "chrome",
+        help="chrome | chromium | msedge",
+    )
     parser.add_argument(
         "--start-url",
         default="",

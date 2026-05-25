@@ -4,12 +4,22 @@ Same automation pattern as **Origincbd** (own session file per client).
 
 ## GMB — fully automatic on the VPS
 
+**Pull code on the VPS** (if the panel edited cron files and `git pull` fails):
+
+```bash
+chmod +x scripts/vps_git_pull.sh
+./scripts/vps_git_pull.sh
+```
+
 **One-time** on the server (SSH with TTY, same IP as monthly cron):
 
 ```bash
+docker compose build seo-reports   # installs xvfb
 chmod +x scripts/docker_gmb_prepare.sh scripts/fix_outputs_perms.sh
 ./scripts/docker_gmb_prepare.sh deepcleaning
 ```
+
+Browser runs in a virtual screen (Xvfb). Approve Google sign-in on your phone if asked.
 
 In the browser: sign in → **Deep Cleaning** → click **Interactions avec les clients** →
 wait for **Performance** → press **ENTER** only when the terminal shows a URL with `#mpd=`.

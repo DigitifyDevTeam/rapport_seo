@@ -39,4 +39,4 @@ services:
     init: true
     stdin_open: true
     tty: true
-    entrypoint: ["/bin/bash"]
+    entrypoint: ["/app/docker-entrypoint.sh"]
