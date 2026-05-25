@@ -215,7 +215,105 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="With --manual: do not change the date picker (set it yourself).",
     )
+    parser.add_argument(
+        "--client-id",
+        default="",
+        help="Client id (e.g. deepcleaning) — saves per-client Performance URL.",
+    )
     return parser.parse_args()
+
+
+def _client_performance_url_path(client_id: str, session_path: Path) -> Path:
+    return session_path.parent / f"gmb-performance-{client_id}.txt"
+
+
+def _load_client_performance_url(client_id: str, session_path: Path) -> str:
+    if not client_id:
+        return ""
+    path = _client_performance_url_path(client_id, session_path)
+    if path.is_file():
+        return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _save_client_performance_url(
+    client_id: str,
+    session_path: Path,
+    url: str,
+) -> None:
+    if not client_id or not url:
+        return
+    if "promote/performance" not in url and "#mpd=" not in url:
+        return
+    path = _client_performance_url_path(client_id, session_path)
+    try:
+        path.write_text(url.strip(), encoding="utf-8")
+        _log(f"saved Performance URL for {client_id}: {path.name}")
+    except OSError as exc:
+        _log(f"could not save Performance URL: {exc}")
+
+
+def _discover_performance_url(page: Page) -> str:
+    try:
+        found = page.evaluate(
+            """
+            () => {
+              for (const a of document.querySelectorAll('a[href]')) {
+                const h = a.href || '';
+                if (h.includes('promote/performance') || h.includes('/performance')) {
+                  return h;
+                }
+              }
+              const u = location.href || '';
+              if (u.includes('promote/performance') || u.includes('#mpd=')) {
+                return u;
+              }
+              return '';
+            }
+            """
+        )
+        return str(found or "").strip()
+    except Exception:
+        return ""
+
+
+def _open_gmb_performance_direct(
+    page: Page,
+    project_name: str,
+    aliases: list[str] | None,
+) -> Page | None:
+    """business.google.com → select location → open Performance (no Search)."""
+    if not open_gmb_app(page, ""):
+        return None
+    names_ok = True
+    if project_name or aliases:
+        names_ok = select_gmb_project(page, project_name, aliases or [])
+        if not names_ok:
+            _log("gmb performance: could not select project on business.google.com")
+            return None
+        time.sleep(2.0)
+        if not _ensure_on_gmb_app(page):
+            select_gmb_project(page, project_name, aliases or [])
+            time.sleep(1.5)
+    perf_url = _discover_performance_url(page)
+    if perf_url.startswith("http"):
+        try:
+            page.goto(perf_url, wait_until="domcontentloaded", timeout=60_000)
+            _safe_wait_idle(page, timeout=25_000)
+            time.sleep(2.5)
+        except Exception as exc:
+            _log(f"gmb performance: navigation failed: {exc}")
+    elif _click_performance_in_gmb_app(page):
+        _safe_wait_idle(page, timeout=20_000)
+        time.sleep(2.0)
+    else:
+        _log("gmb performance: no Performance link on business.google.com")
+        return None
+    if _wait_for_dashboard_frame(page, attempts=15) is not None:
+        return page
+    if "#mpd=" in (page.url or "") or "promote/performance" in (page.url or ""):
+        return page
+    return page if _page_alive(page) else None
 
 
 def _pick_dashboard_page(context, fallback: Page) -> Page:
@@ -255,7 +353,18 @@ def _now_iso() -> str:
 
 
 def _log(msg: str) -> None:
-    print(f"[gmb-ui] {msg}", flush=True)
+    text = f"[gmb-ui] {msg}"
+    try:
+        print(text, flush=True)
+    except UnicodeEncodeError:
+        # Windows console (cp1252) cannot print → etc.
+        print(
+            text.encode(sys.stdout.encoding or "utf-8", errors="replace").decode(
+                sys.stdout.encoding or "utf-8",
+                errors="replace",
+            ),
+            flush=True,
+        )
 
 
 def _safe_wait_idle(page: Page, timeout: int = 15_000) -> None:
@@ -980,7 +1089,7 @@ JS_CLICK_MPD_LINK = "(() => {\n" + _JS_HELPERS_BODY + r"""
 """
 
 
-def _wait_for_dashboard_frame(page: Page, attempts: int = 25) -> Frame | None:
+def _wait_for_dashboard_frame(page: Page, attempts: int = 35) -> Frame | None:
     """Poll until the Performance iframe is available."""
     try:
         probe = page.evaluate(JS_PROBE)
@@ -2179,29 +2288,30 @@ def main() -> int:
         dashboard_frame: Frame | None = None
         dash_url = (args.dashboard_url or "").strip() or saved_url
 
+        client_id = (args.client_id or "").strip()
+        client_perf_url = _load_client_performance_url(client_id, session_path)
+        if client_perf_url and not dash_url:
+            dash_url = client_perf_url
+            _log(f"using per-client Performance URL ({client_id})")
+
         def _capture_from_gmb_app() -> Page | None:
             """Open GBP app, select location, then Performance (fiche screenshot later)."""
-            start = dash_url if dash_url and "business.google.com" in dash_url else ""
-            if not open_gmb_app(page, start):
-                return None
-            if primary or alias_only:
-                select_gmb_project(page, primary, alias_only)
-                if not _ensure_on_gmb_app(page):
-                    select_gmb_project(page, primary, alias_only)
-            return open_performance_overlay(page)
+            return _open_gmb_performance_direct(page, primary, alias_only)
 
-        # 0) Direct Performance URL saved at login (#mpd=).
-        if dash_url and "google.com/search" in dash_url and "#mpd=" in dash_url:
+        # 0) Direct Performance URL saved at login (#mpd=) or per-client file.
+        if dash_url and ("#mpd=" in dash_url or "promote/performance" in dash_url):
             try:
                 page.goto(dash_url, wait_until="domcontentloaded", timeout=60_000)
                 _safe_wait_idle(page, timeout=25_000)
-                time.sleep(2.0)
+                time.sleep(2.5)
                 if not _search_is_blocked(page):
-                    dashboard_page = open_performance_overlay(
-                        page,
-                        search_query=search_query,
-                        dash_url=dash_url,
-                    )
+                    dashboard_page = page
+                    if _wait_for_dashboard_frame(page, attempts=20) is None:
+                        dashboard_page = open_performance_overlay(
+                            page,
+                            search_query=search_query,
+                            dash_url=dash_url,
+                        )
                     if dashboard_page is None and "#mpd=" in (page.url or ""):
                         dashboard_page = page
             except Exception as exc:
@@ -2251,9 +2361,25 @@ def main() -> int:
 
         if dashboard_page is not None and _page_alive(dashboard_page):
             dashboard_frame = _wait_for_dashboard_frame(dashboard_page)
+            if dashboard_frame is None:
+                for extra in dashboard_page.context.pages:
+                    if extra is dashboard_page or not _page_alive(extra):
+                        continue
+                    dashboard_frame = _wait_for_dashboard_frame(extra, attempts=12)
+                    if dashboard_frame is not None:
+                        dashboard_page = extra
+                        _log(f"dashboard frame: found on tab {extra.url[:80]}")
+                        break
 
         if dashboard_frame is None:
             _log("dashboard frame: not found; aborting Performance capture.")
+            if dashboard_page is not None and args.prefer_gmb_app:
+                _log("gmb performance: retry via business.google.com …")
+                dashboard_page = _open_gmb_performance_direct(
+                    page, primary, alias_only,
+                )
+                if dashboard_page is not None:
+                    dashboard_frame = _wait_for_dashboard_frame(dashboard_page)
         if dashboard_frame is not None and dashboard_page is not None:
             try:
                 modal_rect = dashboard_frame.evaluate(JS_FIND_MODAL)
@@ -2385,6 +2511,8 @@ def main() -> int:
                 except OSError:
                     pass
             out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            if client_id and final_url:
+                _save_client_performance_url(client_id, session_path, final_url)
             if kpis and final_url and "#mpd=" in final_url:
                 try:
                     _persist_session(session_path, context,

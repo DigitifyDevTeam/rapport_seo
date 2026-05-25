@@ -33,10 +33,23 @@ python scripts/clients/deepcleaning/gmb_ui_capture.py 2026-04
 python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 ```
 
-Sessions: **`gmb-origincbd.json`** (shared Google account via `ui_session_client` in
-`config/clients.yaml`), `clarity-deepcleaning.json`. Do not rely on
-`gmb-deepcleaning.json` on the VPS — the pipeline uses the Origincbd session
-automatically.
+Sessions: **`gmb-deepcleaning.json`**, `clarity-deepcleaning.json` (same Google
+account as other clients is fine — each file stores that brand's Performance URL).
+
+Copy to the VPS:
+
+- ``outputs/_sessions/gmb-deepcleaning.json``
+
+Then on the server: ``SEO_REPORT_REFRESH_GMB_UI=1 ./scripts/docker_run_client.sh deepcleaning 2026-04``
+
+### Clarity « Pages supérieures »
+
+Re-capture after pulling the latest code (tab fix):
+
+```powershell
+Remove-Item outputs\deepcleaning\2026-04\clarity_card_popular_pages.png -ErrorAction SilentlyContinue
+node scripts/clarity_ui_extract.js --session outputs\_sessions\clarity-deepcleaning.json --out outputs\deepcleaning\2026-04\clarity_ui.json --project-id lfjtuxge3c --period-start 2026-03-26 --period-end 2026-04-26 --skip-widgets popular_products --auto
+```
 
 ## VPS / Docker
 

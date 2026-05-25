@@ -146,19 +146,32 @@ def _normalize_report_profile(raw: Any) -> dict[str, str]:
     return {key: str(raw[key]).strip() for key in keys if raw.get(key)}
 
 
-def gmb_ui_session_owner(client: ClientConfig) -> str:
-    """Client id whose ``outputs/_sessions/gmb-<id>.json`` holds GBP cookies.
-
-    Digitify and DeepCleaning share the agency Google account with Origincbd;
-    they set ``gmb.ui_session_client: origincbd`` so one login works for all.
-    """
-    shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
-    return shared or client.id
-
-
 def gmb_ui_session_path(
     client: ClientConfig,
     sessions_dir: Path | None = None,
 ) -> Path:
+    """Prefer ``gmb-<client_id>.json``; optional ``gmb.ui_session_client`` fallback.
+
+    Each client can keep its own session file (saved Performance URL per brand).
+    If missing, ``ui_session_client`` (e.g. origincbd) is used — same Google account,
+    no extra login in the prepare scripts.
+    """
     base = sessions_dir or (OUTPUTS_DIR / "_sessions")
-    return base / f"gmb-{gmb_ui_session_owner(client)}.json"
+    own = base / f"gmb-{client.id}.json"
+    if own.is_file():
+        return own
+    shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    if shared:
+        fallback = base / f"gmb-{shared}.json"
+        if fallback.is_file():
+            return fallback
+    return own
+
+
+def gmb_ui_session_owner(client: ClientConfig) -> str:
+    """Id suffix of the session file actually used (for logging)."""
+    path = gmb_ui_session_path(client)
+    name = path.stem  # gmb-deepcleaning
+    if name.startswith("gmb-"):
+        return name[4:]
+    return client.id

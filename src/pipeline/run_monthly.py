@@ -38,7 +38,8 @@ import pandas as pd
 
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
-                          get_client, gmb_ui_session_path, load_clients)
+                          get_client, gmb_ui_session_owner, gmb_ui_session_path,
+                          load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
 from src.insights import generator as insights
@@ -779,16 +780,23 @@ _GMB_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 
 
 def _gmb_ui_profile_dir(client: ClientConfig) -> Path:
-    """Chrome user-data dir for GMB UI (isolated per ``google_oauth_account``)."""
-    from src.config import gmb_ui_session_owner
-
+    """Chrome user-data dir for GMB UI (per client when present)."""
+    base = _GMB_UI_SESSIONS_DIR
     account = (client.google_oauth_account or "").strip()
     if account:
-        return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{account}"
-    owner = gmb_ui_session_owner(client)
-    if owner != client.id:
-        return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
-    return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
+        return base / f"chrome-profile-gmb-{account}"
+    own = base / f"chrome-profile-gmb-{client.id}"
+    if own.is_dir():
+        return own
+    shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    if shared:
+        fallback = base / f"chrome-profile-gmb-{shared}"
+        if fallback.is_dir():
+            return fallback
+    legacy = base / "chrome-profile-gmb"
+    if legacy.is_dir():
+        return legacy
+    return own
 
 
 def _backup_gmb_ui_if_good(json_path: Path) -> None:
@@ -933,15 +941,30 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             "--project-names",
             ",".join(str(a).strip() for a in aliases if str(a).strip()),
         ])
-    if session_path.exists():
+    cmd.extend(["--client-id", client.id])
+    perf_url_file = _GMB_UI_SESSIONS_DIR / f"gmb-performance-{client.id}.txt"
+    perf_url = ""
+    if perf_url_file.is_file():
+        perf_url = perf_url_file.read_text(encoding="utf-8").strip()
+    dash_from_session = ""
+    if session_path.is_file():
         try:
-            saved = json.loads(
-                session_path.read_text(encoding="utf-8"),
-            ).get("url") or ""
-            if "#mpd=" in str(saved):
-                cmd.extend(["--dashboard-url", str(saved)])
+            dash_from_session = str(
+                json.loads(session_path.read_text(encoding="utf-8")).get("url") or "",
+            ).strip()
         except (OSError, json.JSONDecodeError):
-            pass
+            dash_from_session = ""
+    if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
+        cmd.extend(["--dashboard-url", perf_url])
+        logger.info("[gmb-ui] Performance URL from %s", perf_url_file.name)
+    elif dash_from_session and (
+        "#mpd=" in dash_from_session or "promote/performance" in dash_from_session
+    ):
+        cmd.extend(["--dashboard-url", dash_from_session])
+        logger.info(
+            "[gmb-ui] Performance URL from %s (saved at login)",
+            session_path.name,
+        )
     logger.info(
         "[gmb-ui] capturing for %s (project=%r, period=%s)",
         client.id,

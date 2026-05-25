@@ -191,9 +191,8 @@ function resolveCardCaptures(skipWidgetIds) {
     if (c.id === "popular_pages" && skip.has("popular_products")) {
       return {
         id: "popular_pages",
-        anchorTabs: ["Pages supérieures", "Pages inactives"],
+        anchorTabs: ["Pages supérieures"],
         activeTab: "Pages supérieures",
-        tabIndex: 0,
         wideAnchor: true,
         exactTabMatch: true,
       };
@@ -523,6 +522,58 @@ function isInactivePagesTabLabel(key) {
   return /inactives?|inactive|sans trafic/i.test(key || "");
 }
 
+/** Click « Pages supérieures » by label (never index 0 — inactive tab is often first). */
+async function activatePagesSuperieuresTab(page, cardHandle) {
+  const clicked = await cardHandle.evaluate((card) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    const wanted = new Set(["pages supérieures", "top pages"]);
+    const blocked = /inactives?|inactive|sans trafic/i;
+    const picks = [];
+    for (const el of card.querySelectorAll(
+      '[role="tab"], button, a, span, li, div[role="button"]',
+    )) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 40) continue;
+      const key = norm(raw);
+      if (blocked.test(key)) continue;
+      if (!wanted.has(key)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 30 || rect.height < 12) continue;
+      picks.push({
+        el,
+        key,
+        pri: key === "pages supérieures" ? 0 : 1,
+        left: rect.left,
+      });
+    }
+    picks.sort((a, b) => a.pri - b.pri || a.left - b.left);
+    if (!picks.length) return false;
+    picks[0].el.scrollIntoView({ block: "center", inline: "nearest" });
+    picks[0].el.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    picks[0].el.click();
+    return true;
+  });
+  if (!clicked) return false;
+  await new Promise((r) => setTimeout(r, 400));
+  return true;
+}
+
+async function popularPagesTabShowsData(cardHandle) {
+  return cardHandle.evaluate(() => {
+    const t = (document.body.innerText || "").toLowerCase();
+    if (/pages sans trafic|0 pages sans trafic|aucune page inactive/i.test(t)) {
+      return false;
+    }
+    if (/https?:\/\//.test(t) || /\s\/\s/.test(t)) return true;
+    if (/\d+\s*%/.test(t) && !/inactives?/.test(t.slice(0, 200))) return true;
+    return !/pages inactives/i.test(t.slice(0, 400));
+  });
+}
+
 async function clickTabOnCard(page, cardHandle, tabLabel, altLabels = [], options = {}) {
   const labels = [tabLabel, ...altLabels].filter(Boolean);
   const exactOnly = Boolean(options.exactTabMatch);
@@ -806,16 +857,22 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   const altOnly = tabLabels.slice(1);
   const tabOpts = { exactTabMatch: Boolean(target.exactTabMatch) };
   let tabOk = false;
-  const maxAttempts = target.id === "popular_products" ? 4 : 3;
+  const maxAttempts = target.id === "popular_products" ? 4 : 4;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (typeof target.tabIndex === "number") {
+    if (target.id === "popular_pages") {
+      tabOk = await activatePagesSuperieuresTab(page, card);
+    } else if (typeof target.tabIndex === "number") {
       tabOk = await clickTabByIndexOnCard(page, card, target.tabIndex);
     }
     if (!tabOk) {
       tabOk = await clickTabOnCard(page, card, target.activeTab, altOnly, tabOpts);
     }
     if (!tabOk) break;
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 1400));
+    if (target.id === "popular_pages") {
+      if (await popularPagesTabShowsData(card)) break;
+      continue;
+    }
     const active = await isTabActiveOnCard(
       page,
       card,
@@ -853,22 +910,12 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   await new Promise((r) => setTimeout(r, target.id === "popular_products" ? 3500 : 2500));
 
   if (target.id === "popular_pages") {
-    const showsTopPages = await card.evaluate(() => {
-      const t = (document.body.innerText || "").toLowerCase();
-      if (t.includes("pages sans trafic") || t.includes("0 pages sans trafic")) {
-        return false;
-      }
-      if (t.includes("pages inactives") && !t.includes("pages supérieures")) {
-        return false;
-      }
-      return true;
-    });
-    if (!showsTopPages) {
+    for (let fix = 0; fix < 3; fix += 1) {
+      if (await popularPagesTabShowsData(card)) break;
       console.warn(
-        "[card:popular_pages] inactive tab detected — forcing Pages supérieures (index 0)",
+        `[card:popular_pages] still on inactive/empty view — retry ${fix + 1}`,
       );
-      await clickTabByIndexOnCard(page, card, 0);
-      await clickTabOnCard(page, card, "Pages supérieures", ["Top pages"], tabOpts);
+      await activatePagesSuperieuresTab(page, card);
       await new Promise((r) => setTimeout(r, 2800));
     }
   }

@@ -1,27 +1,49 @@
-"""DeepCleaning — GMB session is shared with Origincbd (same Google account).
+"""DeepCleaning — save GMB session (Google Search → Performance → ENTER).
 
-Do not create ``gmb-deepcleaning.json``. Run Origincbd prepare once::
+Usage::
 
-    python scripts/clients/origincbd/gmb_ui_prepare.py
+    python scripts/clients/deepcleaning/gmb_ui_prepare.py
 
-Then run reports for digitify / deepcleaning normally.
+On a Linux VPS (no Playwright on the host), use Docker instead::
+
+    ./scripts/docker_gmb_prepare.sh deepcleaning
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-ORIGINCBD_PREPARE = ROOT / "scripts" / "clients" / "origincbd" / "gmb_ui_prepare.py"
+SESSION = ROOT / "outputs" / "_sessions" / "gmb-deepcleaning.json"
+PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
+SCRIPT = ROOT / "scripts" / "gmb_ui_login.py"
+SEARCH_QUERY = "Deep Cleaning Lavage et nettoyage professionnel Colombes"
 
 
 def main() -> int:
-    print("DeepCleaning uses the same Google account as Origincbd.")
-    print("Launching Origincbd GMB session capture (shared cookies)…")
+    start_url = (
+        "https://www.google.com/search?hl=fr&q="
+        + urllib.parse.quote_plus(SEARCH_QUERY)
+    )
+    print("DeepCleaning — GMB session capture")
+    print("1) Browser opens Google Search for your fiche.")
+    print("2) Sign in once in THAT window (same Google account as other clients is OK).")
+    print("3) Click « XXX interactions avec les clients » on the Deep Cleaning panel.")
+    print("4) Wait for Performances / Vue d'ensemble.")
+    print("5) Press ENTER in this terminal.")
     print("")
-    return subprocess.call([sys.executable, str(ORIGINCBD_PREPARE)], cwd=str(ROOT))
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--out", str(SESSION),
+        "--profile", str(PROFILE),
+        "--start-url", start_url,
+        "--client-hint", "deepcleaning",
+    ]
+    return subprocess.call(cmd, cwd=str(ROOT))
 
 
 if __name__ == "__main__":

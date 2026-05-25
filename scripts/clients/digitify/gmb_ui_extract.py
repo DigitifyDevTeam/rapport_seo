@@ -16,8 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
-SESSION = ROOT / "outputs" / "_sessions" / "gmb-origincbd.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb-origincbd"
+SESSION = ROOT / "outputs" / "_sessions" / "gmb-digitify.json"
+PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
 
 SEARCH_QUERY = "Digitify"
 PROJECT_NAME = "Digitify"
@@ -58,7 +58,7 @@ def main() -> int:
         "--no-auto-period",
         "--period-start", period_start,
         "--period-end", period_end,
-        "--prefer-gmb-app",
+        "--client-id", "digitify",
     ]
     saved = json.loads(SESSION.read_text(encoding="utf-8")).get("url") or ""
     if "#mpd=" in str(saved):

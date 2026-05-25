@@ -65,8 +65,7 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      ui_session_client: origincbd
-      ui_prefer_gmb_app: true
+      # Optional fallback if gmb-digitify.json is missing: ui_session_client: origincbd
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
       ui_project_aliases:
@@ -98,9 +97,7 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Same agency Google login as Origincbd (one session on the VPS).
-      ui_session_client: origincbd
-      ui_prefer_gmb_app: true
+      # Session: outputs/_sessions/gmb-deepcleaning.json (see scripts/clients/deepcleaning/)
       # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
