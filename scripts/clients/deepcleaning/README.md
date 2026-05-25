@@ -35,6 +35,26 @@ python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 
 Sessions: `gmb-deepcleaning.json`, `clarity-deepcleaning.json` (not Origincbd files).
 
+## VPS / Docker
+
+Sessions captured on Windows **do not work** on the server IP (Google login wall / CAPTCHA).
+
+On the VPS, refresh the GMB session once per client:
+
+```bash
+chmod +x scripts/docker_gmb_login.sh
+./scripts/docker_gmb_login.sh deepcleaning
+```
+
+Then run the report:
+
+```bash
+docker compose build seo-reports
+./scripts/docker_run_client.sh deepcleaning 2026-04
+```
+
+Copy `outputs/_sessions/gmb-deepcleaning.json` from the VPS if you also run reports locally.
+
 ## Clarity
 
 ```powershell

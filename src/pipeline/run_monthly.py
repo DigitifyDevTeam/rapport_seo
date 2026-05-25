@@ -400,6 +400,7 @@ _CLARITY_UI_EXTRACT_SCRIPT = (PROJECT_ROOT / "scripts"
                                 / "clarity_ui_extract.js")
 _CLARITY_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 _CLARITY_WIDGET_CARDS_DEFAULT = (
+    "overview",
     "referrers",
     "devices",
     "popular_pages",
@@ -909,7 +910,11 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         ]
     if no_search:
         cmd.append("--no-search")
-    if gmb_cfg.get("ui_prefer_gmb_app"):
+    prefer_app = gmb_cfg.get("ui_prefer_gmb_app")
+    docker_mode = (env("SEO_REPORT_DOCKER") or "").lower() in (
+        "1", "true", "yes", "on",
+    )
+    if prefer_app or (docker_mode and prefer_app is not False):
         cmd.append("--prefer-gmb-app")
     aliases = gmb_cfg.get("ui_project_aliases") or []
     if aliases:
@@ -1102,7 +1107,19 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     )
     if "gmb" not in _disabled_connectors(client):
         _capture_gmb_ui(client, output_dir, period)
-    ensure_valid_business_card(output_dir, client_id=client.id)
+    gmb_ref_raw = (getattr(client, "gmb", None) or {}).get(
+        "business_card_reference",
+    )
+    gmb_ref = None
+    if gmb_ref_raw:
+        candidate = Path(str(gmb_ref_raw))
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        if candidate.is_file():
+            gmb_ref = candidate
+    ensure_valid_business_card(
+        output_dir, client_id=client.id, reference=gmb_ref,
+    )
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
     _log_fetch_summary(client.id, current)

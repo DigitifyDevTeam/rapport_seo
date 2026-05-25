@@ -48,3 +48,10 @@ python -m src.pipeline.run_monthly --client digitify --month 2026-04
 ```
 
 Adjust `ui_search_query` in `config/clients.yaml` if the Google Search label differs from `Digitify`.
+
+## VPS / Docker
+
+```bash
+./scripts/docker_gmb_login.sh digitify
+./scripts/docker_run_client.sh digitify 2026-04
+```

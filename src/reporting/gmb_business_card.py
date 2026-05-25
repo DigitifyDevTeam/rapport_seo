@@ -21,12 +21,19 @@ _ORGANIC_MARKERS = (
 )
 _PANEL_MARKERS = (
     "avis google",
-    "magasin de cannabis",
+    "magasin de",
     "gérez cette fiche",
-    "cerisaie",
     "ouvert",
     "itinéraire",
     "appeler",
+    "cerisaie",
+    "nettoyage",
+    "lavage",
+    "colombes",
+    "couvreur",
+    "habitat",
+    "digitify",
+    "deep cleaning",
 )
 
 
@@ -93,6 +100,7 @@ def ensure_valid_business_card(
     output_dir: Path,
     *,
     client_id: str = "",
+    reference: Path | None = None,
 ) -> Path | None:
     """Replace invalid ``gmb_business_card.png`` with the bundled reference."""
     target = output_dir / "gmb_business_card.png"
@@ -103,7 +111,9 @@ def ensure_valid_business_card(
             target.unlink()
         except OSError:
             pass
-    ref = reference_png_for_client(client_id) if client_id else None
+    ref = reference if reference and reference.is_file() else None
+    if ref is None and client_id:
+        ref = reference_png_for_client(client_id)
     if ref is None:
         logger.warning(
             "[gmb-card] no valid business card in %s and no reference for %s",

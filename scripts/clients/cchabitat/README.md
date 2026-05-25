@@ -42,3 +42,12 @@ python -m src.pipeline.run_monthly --client cchabitat --month 2026-04
 ```
 
 Do **not** store Google passwords in `.env`; OAuth tokens live in `secrets/google_oauth_token_cchabitat.json`.
+
+## VPS / Docker
+
+Sessions from Windows often fail on the server (login wall). Refresh on the VPS:
+
+```bash
+./scripts/docker_gmb_login.sh cchabitat
+./scripts/docker_run_client.sh cchabitat 2026-04
+```
