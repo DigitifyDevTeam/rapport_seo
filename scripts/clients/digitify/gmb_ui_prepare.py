@@ -4,9 +4,8 @@ Usage::
 
     python scripts/clients/digitify/gmb_ui_prepare.py
 
-On a Linux VPS (no Playwright on the host), use Docker instead::
-
-    ./scripts/docker_gmb_prepare.sh digitify
+On the VPS, copy ``outputs/_sessions/gmb-digitify.json`` after a good local run
+(URL must contain ``#mpd=``, same as Origincbd).
 """
 
 from __future__ import annotations

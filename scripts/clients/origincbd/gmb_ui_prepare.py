@@ -4,9 +4,7 @@ Usage::
 
     python scripts/clients/origincbd/gmb_ui_prepare.py
 
-On a Linux VPS (no Playwright on the host), use Docker instead::
-
-    ./scripts/docker_gmb_prepare.sh origincbd
+On the VPS, copy ``outputs/_sessions/gmb-origincbd.json`` to the server (same path).
 
 If Playwright Chrome stays stuck on sign-in, use real Chrome instead::
 

@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
-# GMB session capture on the VPS (same IP as monthly cron).
+# GMB sessions must be prepared on Windows (same as Origincbd), not on the VPS.
 #
-# Usage (SSH with -t):
+# Usage:
 #   ./scripts/docker_gmb_prepare.sh deepcleaning
 #
-# Uses a virtual display (Xvfb) — you will not see the browser window.
-# Complete Google sign-in on your phone if prompted; then follow terminal text.
+# This only prints instructions. Run prepare on your PC, then copy:
+#   outputs/_sessions/gmb-<client>.json  →  same path on the VPS
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${ROOT}"
 CLIENT="${1:?client id (e.g. deepcleaning)}"
-PREPARE="scripts/clients/${CLIENT}/gmb_ui_prepare.py"
-if [[ ! -f "${ROOT}/${PREPARE}" ]]; then
-  echo "No prepare script: ${PREPARE}" >&2
-  exit 1
-fi
-docker compose build seo-reports
-echo "Starting GMB prepare for ${CLIENT} (virtual display via Xvfb)..."
-docker compose run --rm -it \
-  -e SEO_REPORT_DOCKER=1 \
-  -e SEO_REPORT_GMB_NO_PROFILE=0 \
-  -e SEO_REPORT_BROWSER_CHANNEL=chromium \
-  seo-reports \
-  bash -lc "xvfb-run -a --server-args='-screen 0 1920x1080x24' python ${PREPARE}"
+cat <<EOF
+GMB prepare for "${CLIENT}" — use Windows (not the VPS browser)
+
+  python scripts/clients/${CLIENT}/gmb_ui_prepare.py
+
+In the browser:
+  1) Sign in to Google
+  2) Open the brand fiche → « interactions avec les clients » → Performance
+  3) Press ENTER only when the saved URL contains #mpd=
+
+Copy to the VPS (FileZilla):
+  outputs/_sessions/gmb-${CLIENT}.json
+
+Verify on the server:
+  docker compose run --rm --no-TTY seo-reports python scripts/check_gmb_vps_sessions.py
+
+Monthly cron then captures GMB headless (no server login).
+EOF

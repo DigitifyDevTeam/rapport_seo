@@ -687,11 +687,13 @@ def _gmb_ui_runs_in_docker() -> bool:
 def _log_gmb_vps_prepare_hint(client: ClientConfig, *, detail: str) -> None:
     logger.warning(
         "[gmb-ui] %s\n"
-        "[gmb-ui] One-time on the VPS (SSH with TTY): "
-        "./scripts/docker_gmb_prepare.sh %s\n"
-        "[gmb-ui] Open Performance for this brand, press ENTER when URL contains #mpd=.\n"
-        "[gmb-ui] Check all clients: python scripts/check_gmb_vps_sessions.py",
+        "[gmb-ui] One-time on Windows: "
+        "python scripts/clients/%s/gmb_ui_prepare.py\n"
+        "[gmb-ui] Wait for Performance (URL must contain #mpd=), then copy "
+        "outputs/_sessions/gmb-%s.json to the VPS.\n"
+        "[gmb-ui] Verify: python scripts/check_gmb_vps_sessions.py",
         detail,
+        client.id,
         client.id,
     )
 
@@ -898,9 +900,11 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         )
     if not session_path.exists():
         logger.warning(
-            "[gmb-ui] no saved session at %s — run on the VPS: "
-            "./scripts/docker_gmb_prepare.sh %s",
+            "[gmb-ui] no saved session at %s — run on Windows: "
+            "python scripts/clients/%s/gmb_ui_prepare.py "
+            "then copy outputs/_sessions/gmb-%s.json to the VPS",
             session_path,
+            client.id,
             client.id,
         )
         return False
@@ -916,7 +920,8 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             client,
             detail=(
                 f"Session {session_path.name} has no Performance URL (#mpd=); "
-                "capture may fail until prepare is done on this server."
+                "capture may fail — redo prepare on Windows (like Origincbd) "
+                "and copy the session JSON to the VPS."
             ),
         )
     if not _GMB_UI_EXTRACT_SCRIPT.exists():

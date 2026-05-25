@@ -1,10 +1,11 @@
 """Verify GMB session files are ready for unattended Docker reports.
 
 Each production client needs ``outputs/_sessions/gmb-<id>.json`` with a
-Performance URL (``#mpd=`` or ``promote/performance``), or
-``gmb-performance-<id>.txt``, created via::
+Performance URL (``#mpd=`` or ``promote/performance``), saved on Windows::
 
-    ./scripts/docker_gmb_prepare.sh <client_id>
+    python scripts/clients/<client>/gmb_ui_prepare.py
+
+Then copy ``gmb-<client>.json`` to the VPS. Same model as Origincbd.
 
 Exit 0 when all OK, 1 when any client is missing or not on Performance.
 """
@@ -43,13 +44,14 @@ def _session_ready(client_id: str, session_path: Path) -> tuple[bool, str]:
 
     if url.rstrip("/").endswith("business.google.com/locations"):
         return False, (
-            f"{session_path.name} stopped at /locations — run "
-            f"./scripts/docker_gmb_prepare.sh {client_id}"
+            f"{session_path.name} stopped at /locations — on Windows run "
+            f"python scripts/clients/{client_id}/gmb_ui_prepare.py "
+            f"(wait for Performance + #mpd=)"
         )
 
     return False, (
-        f"{session_path.name} has no Performance URL — run "
-        f"./scripts/docker_gmb_prepare.sh {client_id}"
+        f"{session_path.name} has no Performance URL — on Windows run "
+        f"python scripts/clients/{client_id}/gmb_ui_prepare.py"
     )
 
 
@@ -73,13 +75,13 @@ def main() -> int:
 
     if bad:
         print(
-            "\nFix: SSH to the VPS with TTY and run prepare once per failing client:\n"
-            "  chmod +x scripts/docker_gmb_prepare.sh\n"
-            "  ./scripts/docker_gmb_prepare.sh deepcleaning\n",
+            "\nFix (one-time per failing client, on your PC):\n"
+            "  python scripts/clients/<client>/gmb_ui_prepare.py\n"
+            "  Copy outputs/_sessions/gmb-<client>.json to the VPS\n",
             file=sys.stderr,
         )
         return 1
-    print("\nAll GMB sessions ready for automated monthly capture.")
+    print("\nAll GMB sessions ready for automated monthly capture on the VPS.")
     return 0
 
 

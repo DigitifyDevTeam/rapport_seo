@@ -4,9 +4,8 @@ Usage::
 
     python scripts/clients/deepcleaning/gmb_ui_prepare.py
 
-On a Linux VPS (no Playwright on the host), use Docker instead::
-
-    ./scripts/docker_gmb_prepare.sh deepcleaning
+On the VPS, copy ``outputs/_sessions/gmb-deepcleaning.json`` after a good local run
+(URL must contain ``#mpd=``, same as Origincbd).
 """
 
 from __future__ import annotations

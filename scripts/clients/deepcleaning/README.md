@@ -1,66 +1,64 @@
 # DeepCleaning
 
-Same automation pattern as **Origincbd** (own session file per client).
+Same GMB model as **Origincbd**: prepare once on **Windows**, copy one JSON to the VPS, monthly cron captures headless.
 
-## GMB — fully automatic on the VPS
+## Why this works (and VPS browser login does not)
 
-**Pull code on the VPS** (if the panel edited cron files and `git pull` fails):
+Origincbd’s `gmb-origincbd.json` contains a **Performance URL with `#mpd=`**. On the server, the pipeline opens that URL directly — no Google Search, no CAPTCHA, no login.
 
-```bash
-chmod +x scripts/vps_git_pull.sh
-./scripts/vps_git_pull.sh
+DeepCleaning fails if the session was saved at `business.google.com/locations` only (no `#mpd=`). Redo prepare on Windows.
+
+## One-time: GMB session (Windows)
+
+```powershell
+cd rapport_seo
+python scripts/clients/deepcleaning/gmb_ui_prepare.py
 ```
 
-**One-time** on the server (SSH with TTY, same IP as monthly cron):
+1. Browser opens Google Search for Deep Cleaning.
+2. Sign in if needed.
+3. Click **« XXX interactions avec les clients »** on the knowledge panel.
+4. Wait until **Performance / Vue d’ensemble** is visible.
+5. Press **ENTER** in the terminal only when the message shows a URL with **`#mpd=`**.
 
-```bash
-docker compose build seo-reports   # installs xvfb
-chmod +x scripts/docker_gmb_prepare.sh scripts/fix_outputs_perms.sh
-./scripts/docker_gmb_prepare.sh deepcleaning
+Check locally:
+
+```powershell
+python scripts/check_gmb_vps_sessions.py
 ```
 
-Browser runs in a virtual screen (Xvfb). Approve Google sign-in on your phone if asked.
+Expect: `[OK] deepcleaning: OK (#mpd= in gmb-deepcleaning.json)`
 
-In the browser: sign in → **Deep Cleaning** → click **Interactions avec les clients** →
-wait for **Performance** → press **ENTER** only when the terminal shows a URL with `#mpd=`.
+## One-time: copy session to VPS
 
-Verify:
+Upload via FileZilla (after `./scripts/fix_outputs_perms.sh` if permission denied):
+
+- `outputs/_sessions/gmb-deepcleaning.json` → same path on the server
+
+Do **not** use `docker_gmb_prepare.sh` on the VPS (browser login on OVH fails).
+
+## Monthly (automatic on VPS)
 
 ```bash
-docker compose run --rm --no-TTY seo-reports python scripts/check_gmb_vps_sessions.py
+./scripts/docker_run_client.sh deepcleaning
+# or
+./scripts/docker_run_all_clients.sh
 ```
 
-**Every month** (cron or manual):
+Each month creates `outputs/deepcleaning/YYYY-MM/` and captures fresh GMB KPIs + PNGs. **No** monthly file copy from Windows.
 
-```bash
-./scripts/docker_run_client.sh deepcleaning          # auto month from .env
-./scripts/docker_run_all_clients.sh                  # all clients + Drive
-```
-
-The pipeline opens Performance in Docker, captures KPIs + PNGs for the **new**
-`outputs/deepcleaning/YYYY-MM/` folder. No copy from Windows.
-
-Repeat `./scripts/docker_gmb_prepare.sh deepcleaning` only if Google logs you out.
+Re-run Windows prepare + re-copy JSON only if Google logs you out.
 
 ## Clarity
+
+Session: `clarity-deepcleaning.json` (copy to VPS like GMB if needed).
 
 ```powershell
 node scripts/clients/deepcleaning/clarity_ui_login.js
 node scripts/clients/deepcleaning/clarity_ui_extract.js 2026-04
 ```
 
-On the VPS, `clarity-deepcleaning.json` is enough if the session stays valid.
-
-## Local Windows (optional)
-
-```powershell
-python scripts/clients/deepcleaning/gmb_ui_prepare.py
-python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
-```
-
-Sessions: `gmb-deepcleaning.json`, `clarity-deepcleaning.json`.
-
 ## VPS notes
 
-- **Permission denied on SFTP?** Run `./scripts/fix_outputs_perms.sh` after Docker reports.
-- **Cron:** `cron_docker_run_all_clients.sh` checks GMB sessions before running.
+- **Permission denied on SFTP?** `./scripts/fix_outputs_perms.sh`
+- **GMB advisory before cron:** `check_gmb_vps_sessions.py` (warnings only, cron still runs)

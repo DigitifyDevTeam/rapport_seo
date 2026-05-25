@@ -97,7 +97,7 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # VPS: one-time ./scripts/docker_gmb_prepare.sh deepcleaning (Performance + #mpd=)
+      # GMB: prepare on Windows (gmb_ui_prepare.py), copy gmb-deepcleaning.json to VPS
       ui_prefer_gmb_app: true
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"

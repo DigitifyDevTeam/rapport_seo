@@ -8,8 +8,8 @@
 # After git pull on the server, this script runs "docker compose build" automatically.
 # Logs: logs/cron_docker_all_YYYY-MM-DD_HHMMSS.log
 #
-# One-time per client on this VPS: ./scripts/docker_gmb_prepare.sh <client_id>
-# (Performance open, URL with #mpd=). Preflight: check_gmb_vps_sessions.py
+# GMB: prepare on Windows, copy gmb-<client>.json to VPS (see Origincbd).
+# Advisory: check_gmb_vps_sessions.py (does not block cron).
 # =============================================================================
 set -euo pipefail
 
