@@ -684,31 +684,15 @@ def _gmb_ui_runs_in_docker() -> bool:
     )
 
 
-def _log_gmb_vps_sync_instructions(
-    client: ClientConfig,
-    period: Period | None,
-    *,
-    reason: str,
-) -> None:
-    month = period.label if period is not None else "YYYY-MM"
-    base = f"outputs/{client.id}/{month}"
-    logger.error(
+def _log_gmb_vps_prepare_hint(client: ClientConfig, *, detail: str) -> None:
+    logger.warning(
         "[gmb-ui] %s\n"
-        "[gmb-ui] On the VPS, copying only outputs/_sessions/gmb-%s.json does "
-        "not work (Google CAPTCHA / login wall from the server IP).\n"
-        "[gmb-ui] After a good report on your PC, copy these files to the server:\n"
-        "[gmb-ui]   %s/gmb_ui.json\n"
-        "[gmb-ui]   %s/gmb_business_card.png\n"
-        "[gmb-ui]   %s/gmb_card_*.png\n"
-        "[gmb-ui] Then run: ./scripts/docker_run_client.sh %s %s\n"
-        "[gmb-ui] (do not set SEO_REPORT_REFRESH_GMB_UI=1 unless re-syncing from PC).",
-        reason,
+        "[gmb-ui] One-time on the VPS (SSH with TTY): "
+        "./scripts/docker_gmb_prepare.sh %s\n"
+        "[gmb-ui] Open Performance for this brand, press ENTER when URL contains #mpd=.\n"
+        "[gmb-ui] Check all clients: python scripts/check_gmb_vps_sessions.py",
+        detail,
         client.id,
-        base,
-        base,
-        base,
-        client.id,
-        month,
     )
 
 
@@ -897,13 +881,6 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
                 output_dir,
             )
             return True
-        if _gmb_ui_runs_in_docker() and not force_refresh:
-            _log_gmb_vps_sync_instructions(
-                client,
-                period,
-                reason="No GMB PNG/KPI files on the server yet.",
-            )
-            return False
     if period and not force_refresh and _gmb_ui_matches_period(output_dir, period):
         logger.info(
             "[gmb-ui] reusing valid captures for %s in %s (no browser)",
@@ -921,28 +898,27 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         )
     if not session_path.exists():
         logger.warning(
-            "[gmb-ui] no saved session at %s — KPIs can still come from the "
-            "GMB API; for dashboard PNGs run login on Windows and copy "
-            "outputs/_sessions/ and outputs/%s/%s/gmb_* to the server.",
+            "[gmb-ui] no saved session at %s — run on the VPS: "
+            "./scripts/docker_gmb_prepare.sh %s",
             session_path,
             client.id,
-            period.label if period is not None else "YYYY-MM",
         )
         return False
-    if (
-        _gmb_ui_runs_in_docker()
-        and not _gmb_session_has_performance_url(session_path)
-        and not _gmb_ui_assets_ready(output_dir)
-    ):
-        _log_gmb_vps_sync_instructions(
+    perf_url_file = _GMB_UI_SESSIONS_DIR / f"gmb-performance-{client.id}.txt"
+    perf_sidecar = ""
+    if perf_url_file.is_file():
+        perf_sidecar = perf_url_file.read_text(encoding="utf-8")
+    has_perf_link = _gmb_session_has_performance_url(session_path) or (
+        "#mpd=" in perf_sidecar or "promote/performance" in perf_sidecar
+    )
+    if _gmb_ui_runs_in_docker() and not has_perf_link:
+        _log_gmb_vps_prepare_hint(
             client,
-            period,
-            reason=(
-                "Session has no Performance URL (#mpd=); browser capture on the "
-                "VPS will be blocked by Google."
+            detail=(
+                f"Session {session_path.name} has no Performance URL (#mpd=); "
+                "capture may fail until prepare is done on this server."
             ),
         )
-        return False
     if not _GMB_UI_EXTRACT_SCRIPT.exists():
         logger.warning("[gmb-ui] extract script not found at %s", _GMB_UI_EXTRACT_SCRIPT)
         return False
@@ -1001,7 +977,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         ]
     if no_search:
         cmd.append("--no-search")
-    if gmb_cfg.get("ui_prefer_gmb_app"):
+    prefer_gmb_app = bool(gmb_cfg.get("ui_prefer_gmb_app"))
+    if _gmb_ui_runs_in_docker() and not has_perf_link:
+        prefer_gmb_app = True
+    if prefer_gmb_app:
         cmd.append("--prefer-gmb-app")
     aliases = gmb_cfg.get("ui_project_aliases") or []
     if aliases:
@@ -1010,7 +989,6 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             ",".join(str(a).strip() for a in aliases if str(a).strip()),
         ])
     cmd.extend(["--client-id", client.id])
-    perf_url_file = _GMB_UI_SESSIONS_DIR / f"gmb-performance-{client.id}.txt"
     perf_url = ""
     if perf_url_file.is_file():
         perf_url = perf_url_file.read_text(encoding="utf-8").strip()

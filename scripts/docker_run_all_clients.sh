@@ -75,6 +75,19 @@ fi
 
 echo "Clients: ${CLIENTS[*]}"
 
+SKIP_GMB_CHECK="$(grep -E '^SEO_REPORT_SKIP_GMB_SESSION_CHECK=' "${ROOT}/.env" 2>/dev/null \
+  | cut -d= -f2- | tr -d '\r' || true)"
+if [[ "${SKIP_GMB_CHECK,,}" != "1" && "${SKIP_GMB_CHECK,,}" != "true" && "${SKIP_GMB_CHECK,,}" != "yes" ]]; then
+  echo ""
+  echo "=== GMB session preflight (VPS automated capture) ==="
+  if ! docker compose run --rm --no-TTY seo-reports \
+    python scripts/check_gmb_vps_sessions.py; then
+    echo "ERROR: Fix GMB sessions before cron can run unattended." >&2
+    echo "  ./scripts/docker_gmb_prepare.sh <client_id>" >&2
+    exit 1
+  fi
+fi
+
 FAILURES=0
 for CLIENT in "${CLIENTS[@]}"; do
   echo ""

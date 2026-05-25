@@ -65,7 +65,7 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Optional fallback if gmb-digitify.json is missing: ui_session_client: origincbd
+      ui_prefer_gmb_app: true
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
       ui_project_aliases:
@@ -97,10 +97,8 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Session: outputs/_sessions/gmb-deepcleaning.json (see scripts/clients/deepcleaning/)
-      # On VPS: copy gmb_* from Windows after a good local run (session JSON alone fails).
-      ui_manual_capture: true
-      # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
+      # VPS: one-time ./scripts/docker_gmb_prepare.sh deepcleaning (Performance + #mpd=)
+      ui_prefer_gmb_app: true
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
       ui_project_aliases:
@@ -134,7 +132,7 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Label shown on business.google.com/locations (partial match OK).
+      ui_prefer_gmb_app: true
       ui_project_name: "Origin"
       # Fallback Google Search query if GBP list does not open Performance.
       ui_search_query: "Origine CBD Paris"

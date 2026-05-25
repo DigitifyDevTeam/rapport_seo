@@ -134,6 +134,20 @@ def _save_session(
         print("\n  Refusing to save: still on Google sign-in.", file=sys.stderr)
         return 1
 
+    if (
+        not force
+        and "business.google.com" in url
+        and "#mpd=" not in url
+        and "promote/performance" not in url
+        and not _page_shows_performance_ui(save_page)
+    ):
+        print(
+            "\n  Refusing to save: still on business.google.com/locations.\n"
+            "  Open « interactions avec les clients » → Performance, then ENTER again.",
+            file=sys.stderr,
+        )
+        return 1
+
     if "google.com/search" in url and "#mpd=" not in url:
         try:
             link = save_page.locator('a[href*="#mpd="]').first
