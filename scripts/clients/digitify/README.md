@@ -8,7 +8,8 @@ Same automation pattern as **DeepCleaning** (separate session files only).
 | Clarity | Project `k23l3ye7zj` — https://digitify.fr |
 | GSC | https://digitify.fr/ |
 
-Sessions: `clarity-digitify.json`, `gmb-digitify.json` (not Origincbd / DeepCleaning files).
+Sessions: `clarity-digitify.json`, **`gmb-origincbd.json`** (shared via `ui_session_client`,
+not `gmb-digitify.json`).
 
 ## Clarity
 

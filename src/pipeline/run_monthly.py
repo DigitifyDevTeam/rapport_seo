@@ -38,19 +38,13 @@ import pandas as pd
 
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
-                          get_client, gmb_ui_session_owner, gmb_ui_session_path,
-                          load_clients)
+                          get_client, gmb_ui_session_path, load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
 from src.insights import generator as insights
 from src.periods import Period
 from src.pipeline.delivery import send_report
 from src.reporting.export_pdf import export as export_pdf
-from src.reporting.gmb_api_fallback import (
-    GMB_API_FALLBACK_VERSION,
-    gmb_ui_assets_complete,
-    materialize_gmb_from_api,
-)
 from src.reporting.gmb_business_card import (
     ensure_valid_business_card,
     is_valid_public_fiche_png,
@@ -406,7 +400,6 @@ _CLARITY_UI_EXTRACT_SCRIPT = (PROJECT_ROOT / "scripts"
                                 / "clarity_ui_extract.js")
 _CLARITY_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 _CLARITY_WIDGET_CARDS_DEFAULT = (
-    "overview",
     "referrers",
     "devices",
     "popular_pages",
@@ -419,13 +412,20 @@ def _clarity_widget_cards(client: ClientConfig) -> tuple[str, ...]:
     return tuple(c for c in _CLARITY_WIDGET_CARDS_DEFAULT if c not in skip)
 
 
+def _clarity_required_card_ids(client: ClientConfig) -> tuple[str, ...]:
+    """Cards required for a complete Clarity capture (incl. KPI strip)."""
+    skip = set((client.clarity or {}).get("ui_skip_widgets") or [])
+    required = ("overview",) + _CLARITY_WIDGET_CARDS_DEFAULT
+    return tuple(c for c in required if c not in skip)
+
+
 def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
                                period: Period) -> bool:
     """True when widget PNGs and ``clarity_ui.json`` match this report period."""
     json_path = output_dir / "clarity_ui.json"
     if not json_path.exists():
         return False
-    for card_id in _clarity_widget_cards(client):
+    for card_id in _clarity_required_card_ids(client):
         png = output_dir / f"clarity_card_{card_id}.png"
         if not png.exists() or png.stat().st_size < 500:
             return False
@@ -650,12 +650,9 @@ def _gmb_kpis_from_daily(df: pd.DataFrame) -> dict[str, str]:
             continue
         total = float(df[col].sum())
         totals.append(total)
-        out[key] = f"{int(round(total)):,}".replace(",", "\u202f")
+        out[key] = f"{int(round(total)):,}"
     if totals:
-        total_interactions = int(round(sum(totals)))
-        out["overview"] = f"{total_interactions:,}".replace(",", "\u202f")
-    if "bookings" not in out:
-        out["bookings"] = "0"
+        out["overview"] = f"{int(round(sum(totals))):,}"
     return out
 
 
@@ -672,8 +669,7 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
     if not _gmb_ui_assets_ready(output_dir):
         return False
     gmb_ui = _load_gmb_ui(output_dir) or {}
-    version = gmb_ui.get("capture_version")
-    if version not in (GMB_UI_CAPTURE_VERSION, GMB_API_FALLBACK_VERSION):
+    if gmb_ui.get("capture_version") != GMB_UI_CAPTURE_VERSION:
         return False
     if gmb_ui.get("report_month") != period.label:
         return False
@@ -784,12 +780,14 @@ _GMB_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 
 def _gmb_ui_profile_dir(client: ClientConfig) -> Path:
     """Chrome user-data dir for GMB UI (isolated per ``google_oauth_account``)."""
+    from src.config import gmb_ui_session_owner
+
     account = (client.google_oauth_account or "").strip()
     if account:
         return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{account}"
     owner = gmb_ui_session_owner(client)
     if owner != client.id:
-        return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{owner}"
+        return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
     return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
 
 
@@ -827,15 +825,12 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
 
     gmb_cfg = getattr(client, "gmb", None) or {}
     session_path = gmb_ui_session_path(client, _GMB_UI_SESSIONS_DIR)
-    owner = gmb_ui_session_owner(client)
-    if owner != client.id:
-        logger.info(
-            "[gmb-ui] using shared GMB session from %s → %s",
-            owner,
-            session_path,
-        )
-    logger.info("[gmb-ui] session path=%s  exists=%s",
-                session_path, session_path.exists())
+    logger.info(
+        "[gmb-ui] session path=%s  exists=%s  (owner=%s)",
+        session_path,
+        session_path.exists(),
+        session_path.stem.removeprefix("gmb-"),
+    )
     force_refresh = (env("SEO_REPORT_REFRESH_GMB_UI") or "").lower() in (
         "1", "true", "yes", "on",
     )
@@ -930,11 +925,7 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         ]
     if no_search:
         cmd.append("--no-search")
-    prefer_app = gmb_cfg.get("ui_prefer_gmb_app")
-    docker_mode = (env("SEO_REPORT_DOCKER") or "").lower() in (
-        "1", "true", "yes", "on",
-    )
-    if prefer_app or (docker_mode and prefer_app is not False):
+    if gmb_cfg.get("ui_prefer_gmb_app"):
         cmd.append("--prefer-gmb-app")
     aliases = gmb_cfg.get("ui_project_aliases") or []
     if aliases:
@@ -980,16 +971,23 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             logger.info("[gmb-ui] %s", line)
 
     gmb_ui = _load_gmb_ui(output_dir)
-    version = (gmb_ui or {}).get("capture_version")
-    if version not in (GMB_UI_CAPTURE_VERSION, GMB_API_FALLBACK_VERSION):
-        logger.warning(
-            "[gmb-ui] gmb_ui.json missing or wrong capture_version "
-            "(expected %s or %s)",
-            GMB_UI_CAPTURE_VERSION,
-            GMB_API_FALLBACK_VERSION,
-        )
-        return False
+    version_ok = (gmb_ui or {}).get("capture_version") == GMB_UI_CAPTURE_VERSION
     kpis = _resolve_gmb_ui_kpis(gmb_ui)
+    if not version_ok:
+        if kpis or (output_dir / "gmb_card_overview.png").is_file():
+            logger.warning(
+                "[gmb-ui] capture_version mismatch (expected %s) but reusing "
+                "KPIs/charts in %s",
+                GMB_UI_CAPTURE_VERSION,
+                output_dir,
+            )
+        else:
+            logger.warning(
+                "[gmb-ui] gmb_ui.json missing or wrong capture_version "
+                "(expected %s)",
+                GMB_UI_CAPTURE_VERSION,
+            )
+            return False
     if kpis:
         logger.info("[gmb-ui] captured KPIs: %s", ", ".join(
             f"{k}={v}" for k, v in kpis.items()))
@@ -1119,48 +1117,6 @@ def _log_fetch_summary(client_id: str, current: dict[str, Any]) -> None:
     )
 
 
-def _ensure_gmb_api_fallback(
-    client: ClientConfig,
-    output_dir: Path,
-    period: Period,
-    gmb_data: dict[str, Any],
-    *,
-    business_card_ref: Path | None = None,
-) -> None:
-    """When Playwright capture fails, build GMB slide files from the Performance API."""
-    keys = ("overview", "calls", "bookings", "directions", "website_clicks")
-    if gmb_ui_assets_complete(output_dir, keys):
-        return
-    daily = gmb_data.get("daily", pd.DataFrame())
-    api_kpis = _gmb_kpis_from_daily(daily)
-    if not api_kpis:
-        env_key = f"GMB_LOCATION_ID_{client.id.upper()}"
-        logger.warning(
-            "[%s] GMB UI capture incomplete and Performance API returned no "
-            "rows. Set %s in .env (run: python scripts/find_gmb_location_ids.py "
-            "%s) so Docker can fill GMB without a browser.",
-            client.id,
-            env_key,
-            client.id,
-        )
-        return
-    gmb_cfg = client.gmb or {}
-    project = (
-        gmb_cfg.get("ui_project_name")
-        or gmb_cfg.get("project_name")
-        or client.name
-    )
-    materialize_gmb_from_api(
-        output_dir,
-        period_label=period.label,
-        period_start=period.start.isoformat(),
-        period_end=period.end.isoformat(),
-        kpis=api_kpis,
-        project_name=str(project),
-        business_card_path=business_card_ref,
-    )
-
-
 def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     output_dir = client.output_dir / period.label
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1171,30 +1127,19 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     )
     if "gmb" not in _disabled_connectors(client):
         _capture_gmb_ui(client, output_dir, period)
-    gmb_ref_raw = (getattr(client, "gmb", None) or {}).get(
-        "business_card_reference",
-    )
-    gmb_ref = None
-    if gmb_ref_raw:
-        candidate = Path(str(gmb_ref_raw))
-        if not candidate.is_absolute():
-            candidate = PROJECT_ROOT / candidate
-        if candidate.is_file():
-            gmb_ref = candidate
+    gmb_cfg = client.gmb or {}
+    ref_raw = (gmb_cfg.get("business_card_reference") or "").strip()
+    ref_path = Path(ref_raw) if ref_raw else None
+    if ref_path and not ref_path.is_absolute():
+        ref_path = PROJECT_ROOT / ref_path
     ensure_valid_business_card(
-        output_dir, client_id=client.id, reference=gmb_ref,
+        output_dir,
+        client_id=client.id,
+        reference_path=ref_path,
     )
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
     _log_fetch_summary(client.id, current)
-    if "gmb" not in _disabled_connectors(client):
-        _ensure_gmb_api_fallback(
-            client,
-            output_dir,
-            period,
-            current.get("gmb", {}),
-            business_card_ref=gmb_ref,
-        )
 
     data = _build_report_data(client, period, current, previous, output_dir)
 

@@ -26,14 +26,9 @@ _PANEL_MARKERS = (
     "ouvert",
     "itinéraire",
     "appeler",
-    "cerisaie",
-    "nettoyage",
-    "lavage",
-    "colombes",
-    "couvreur",
-    "habitat",
-    "digitify",
-    "deep cleaning",
+    "site web",
+    "enregistrer",
+    "partager",
 )
 
 
@@ -84,8 +79,14 @@ def is_valid_public_fiche_png(path: Path) -> bool:
     return False
 
 
-def reference_png_for_client(client_id: str) -> Path | None:
+def reference_png_for_client(
+    client_id: str,
+    *,
+    reference_path: Path | None = None,
+) -> Path | None:
     """Bundled fallback when browser capture fails (per-client asset)."""
+    if reference_path and reference_path.is_file():
+        return reference_path
     candidate = (
         Path(__file__).resolve().parents[2]
         / "scripts"
@@ -100,7 +101,7 @@ def ensure_valid_business_card(
     output_dir: Path,
     *,
     client_id: str = "",
-    reference: Path | None = None,
+    reference_path: Path | None = None,
 ) -> Path | None:
     """Replace invalid ``gmb_business_card.png`` with the bundled reference."""
     target = output_dir / "gmb_business_card.png"
@@ -111,9 +112,10 @@ def ensure_valid_business_card(
             target.unlink()
         except OSError:
             pass
-    ref = reference if reference and reference.is_file() else None
-    if ref is None and client_id:
-        ref = reference_png_for_client(client_id)
+    ref = reference_png_for_client(
+        client_id,
+        reference_path=reference_path,
+    ) if client_id else reference_path
     if ref is None:
         logger.warning(
             "[gmb-card] no valid business card in %s and no reference for %s",

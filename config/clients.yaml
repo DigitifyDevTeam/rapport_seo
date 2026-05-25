@@ -36,9 +36,9 @@ clients:
       account_id: ""
       location_id: ""
       # Google Search / GBP label (site brand: Concept Confort Habitat).
+      ui_prefer_gmb_app: true
       ui_project_name: "Concept Confort Habitat"
       ui_search_query: "Concept Confort Habitat couvreur Val-de-Marne"
-      ui_prefer_gmb_app: true
       ui_project_aliases:
         - "CC Habitat"
         - "Concept Confort Habitat"
@@ -65,11 +65,10 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Same Google account as Origincbd — reuse its Playwright session file.
       ui_session_client: origincbd
+      ui_prefer_gmb_app: true
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
-      ui_prefer_gmb_app: true
     clarity:
       project_id: "k23l3ye7zj"
       ui_skip_widgets:
@@ -96,12 +95,12 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
-      # Same Google account as Origincbd — reuse its Playwright session file.
+      # Same agency Google login as Origincbd (one session on the VPS).
       ui_session_client: origincbd
+      ui_prefer_gmb_app: true
       # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
-      ui_prefer_gmb_app: true
     clarity:
       project_id: "lfjtuxge3c"
       # No e-commerce: skip Produits populaires widget + PPT column (Origincbd unchanged).
@@ -133,7 +132,6 @@ clients:
       ui_project_name: "Origin"
       # Fallback Google Search query if GBP list does not open Performance.
       ui_search_query: "Origine CBD Paris"
-      ui_prefer_gmb_app: true
       # Used when automated capture saves an organic snippet instead of the panel.
       business_card_reference: scripts/clients/origincbd/gmb_business_card_reference.png
     clarity:

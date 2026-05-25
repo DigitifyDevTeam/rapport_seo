@@ -58,6 +58,7 @@ def main() -> int:
         "--no-auto-period",
         "--period-start", period_start,
         "--period-end", period_end,
+        "--prefer-gmb-app",
     ]
     saved = json.loads(SESSION.read_text(encoding="utf-8")).get("url") or ""
     if "#mpd=" in str(saved):

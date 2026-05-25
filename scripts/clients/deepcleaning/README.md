@@ -33,7 +33,10 @@ python scripts/clients/deepcleaning/gmb_ui_capture.py 2026-04
 python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 ```
 
-Sessions: `gmb-deepcleaning.json`, `clarity-deepcleaning.json` (not Origincbd files).
+Sessions: **`gmb-origincbd.json`** (shared Google account via `ui_session_client` in
+`config/clients.yaml`), `clarity-deepcleaning.json`. Do not rely on
+`gmb-deepcleaning.json` on the VPS — the pipeline uses the Origincbd session
+automatically.
 
 ## VPS / Docker
 

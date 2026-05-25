@@ -28,6 +28,12 @@ const path = require("path");
 const readline = require("readline");
 const puppeteer = require("puppeteer");
 
+/** Always store absolute paths in clarity_ui.json (Docker cwd = /app). */
+function chartPathAbsolute(filePath) {
+  if (!filePath) return null;
+  return path.resolve(filePath);
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const get = (name) => {
@@ -901,7 +907,7 @@ async function captureSharedTabWidgets(page, targets, outDir) {
       const prepared = await prepareWidgetCard(page, target, card);
       const written = await screenshotPreparedCard(page, target, prepared, cardOut);
       results[target.id] = written
-        ? path.relative(process.cwd(), written)
+        ? chartPathAbsolute(written)
         : null;
     } catch (err) {
       console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
@@ -947,7 +953,7 @@ async function captureAutoWidgetCards(page, cardTargets, outDir) {
     const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
     try {
       const written = await screenshotWidgetCard(page, target, cardOut);
-      charts[target.id] = written ? path.relative(process.cwd(), written) : null;
+      charts[target.id] = written ? chartPathAbsolute(written) : null;
     } catch (err) {
       console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
       charts[target.id] = null;
@@ -1201,7 +1207,7 @@ async function runRecordMode({
     const base = path.basename(srcPath);
     markHandled(srcPath, base);
     const dest = copyPngToCard(srcPath, outDir, cardId);
-    charts[cardId] = path.relative(process.cwd(), dest);
+    charts[cardId] = chartPathAbsolute(dest);
     pending.delete(cardId);
     console.log(`[record] ✓ ${cardId} ← ${base} (${reason})`);
     console.log(statusLine());
@@ -1413,7 +1419,7 @@ async function main() {
   const overviewOut = path.join(path.dirname(outPath), "clarity_card_overview.png");
   try {
     const written = await captureKpiStripScreenshot(page, KPI_LABELS, overviewOut);
-    charts.overview = written ? path.relative(process.cwd(), written) : null;
+    charts.overview = written ? chartPathAbsolute(written) : null;
   } catch (err) {
     console.warn(`[card:overview] screenshot failed: ${err.message}`);
     charts.overview = null;
