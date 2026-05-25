@@ -65,6 +65,8 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
+      # Same Google account as Origincbd — reuse its Playwright session file.
+      ui_session_client: origincbd
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
       ui_prefer_gmb_app: true
@@ -94,6 +96,8 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
+      # Same Google account as Origincbd — reuse its Playwright session file.
+      ui_session_client: origincbd
       # Google Search label (see fiche: « Deep Cleaning : Lavage et nettoyage professionnel »).
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"

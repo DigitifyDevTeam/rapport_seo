@@ -16,8 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
-SESSION = ROOT / "outputs" / "_sessions" / "gmb-digitify.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
+SESSION = ROOT / "outputs" / "_sessions" / "gmb-origincbd.json"
+PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb-origincbd"
 
 SEARCH_QUERY = "Digitify"
 PROJECT_NAME = "Digitify"

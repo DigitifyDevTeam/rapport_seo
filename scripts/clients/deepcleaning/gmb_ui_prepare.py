@@ -1,43 +1,27 @@
-"""DeepCleaning — save GMB session (open Performance, press ENTER).
+"""DeepCleaning — GMB session is shared with Origincbd (same Google account).
 
-Usage::
+Do not create ``gmb-deepcleaning.json``. Run Origincbd prepare once::
 
-    python scripts/clients/deepcleaning/gmb_ui_prepare.py
+    python scripts/clients/origincbd/gmb_ui_prepare.py
+
+Then run reports for digitify / deepcleaning normally.
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
-import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SESSION = ROOT / "outputs" / "_sessions" / "gmb-deepcleaning.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
-SCRIPT = ROOT / "scripts" / "gmb_ui_login.py"
-SEARCH_QUERY = "Deep Cleaning Lavage et nettoyage professionnel Colombes"
+ORIGINCBD_PREPARE = ROOT / "scripts" / "clients" / "origincbd" / "gmb_ui_prepare.py"
 
 
 def main() -> int:
-    start_url = (
-        "https://www.google.com/search?hl=fr&q="
-        + urllib.parse.quote_plus(SEARCH_QUERY)
-    )
-    print("1) Browser opens Google Search for Deep Cleaning.")
-    print("2) Click « XXX interactions avec les clients » under « Votre établissement sur Google ».")
-    print("3) Wait for Performance (Vue d'ensemble, Appels, …).")
-    print("4) Press ENTER — URL must contain #mpd=")
+    print("DeepCleaning uses the same Google account as Origincbd.")
+    print("Launching Origincbd GMB session capture (shared cookies)…")
     print("")
-    cmd = [
-        sys.executable,
-        str(SCRIPT),
-        "--out", str(SESSION),
-        "--profile", str(PROFILE),
-        "--start-url", start_url,
-        "--client-hint", "deepcleaning",
-    ]
-    return subprocess.call(cmd, cwd=str(ROOT))
+    return subprocess.call([sys.executable, str(ORIGINCBD_PREPARE)], cwd=str(ROOT))
 
 
 if __name__ == "__main__":

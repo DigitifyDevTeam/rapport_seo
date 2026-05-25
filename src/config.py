@@ -144,3 +144,21 @@ def _normalize_report_profile(raw: Any) -> dict[str, str]:
         return {}
     keys = ("client", "activity", "site_name", "url", "seo_pack", "seo_since")
     return {key: str(raw[key]).strip() for key in keys if raw.get(key)}
+
+
+def gmb_ui_session_owner(client: ClientConfig) -> str:
+    """Client id whose ``outputs/_sessions/gmb-<id>.json`` holds GBP cookies.
+
+    Digitify and DeepCleaning share the agency Google account with Origincbd;
+    they set ``gmb.ui_session_client: origincbd`` so one login works for all.
+    """
+    shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    return shared or client.id
+
+
+def gmb_ui_session_path(
+    client: ClientConfig,
+    sessions_dir: Path | None = None,
+) -> Path:
+    base = sessions_dir or (OUTPUTS_DIR / "_sessions")
+    return base / f"gmb-{gmb_ui_session_owner(client)}.json"

@@ -38,13 +38,19 @@ import pandas as pd
 
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
-                          get_client, load_clients)
+                          get_client, gmb_ui_session_owner, gmb_ui_session_path,
+                          load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
 from src.insights import generator as insights
 from src.periods import Period
 from src.pipeline.delivery import send_report
 from src.reporting.export_pdf import export as export_pdf
+from src.reporting.gmb_api_fallback import (
+    GMB_API_FALLBACK_VERSION,
+    gmb_ui_assets_complete,
+    materialize_gmb_from_api,
+)
 from src.reporting.gmb_business_card import (
     ensure_valid_business_card,
     is_valid_public_fiche_png,
@@ -644,9 +650,12 @@ def _gmb_kpis_from_daily(df: pd.DataFrame) -> dict[str, str]:
             continue
         total = float(df[col].sum())
         totals.append(total)
-        out[key] = f"{int(round(total)):,}"
+        out[key] = f"{int(round(total)):,}".replace(",", "\u202f")
     if totals:
-        out["overview"] = f"{int(round(sum(totals))):,}"
+        total_interactions = int(round(sum(totals)))
+        out["overview"] = f"{total_interactions:,}".replace(",", "\u202f")
+    if "bookings" not in out:
+        out["bookings"] = "0"
     return out
 
 
@@ -663,7 +672,8 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
     if not _gmb_ui_assets_ready(output_dir):
         return False
     gmb_ui = _load_gmb_ui(output_dir) or {}
-    if gmb_ui.get("capture_version") != GMB_UI_CAPTURE_VERSION:
+    version = gmb_ui.get("capture_version")
+    if version not in (GMB_UI_CAPTURE_VERSION, GMB_API_FALLBACK_VERSION):
         return False
     if gmb_ui.get("report_month") != period.label:
         return False
@@ -777,6 +787,9 @@ def _gmb_ui_profile_dir(client: ClientConfig) -> Path:
     account = (client.google_oauth_account or "").strip()
     if account:
         return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{account}"
+    owner = gmb_ui_session_owner(client)
+    if owner != client.id:
+        return _GMB_UI_SESSIONS_DIR / f"chrome-profile-gmb-{owner}"
     return _GMB_UI_SESSIONS_DIR / "chrome-profile-gmb"
 
 
@@ -813,7 +826,14 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         return False
 
     gmb_cfg = getattr(client, "gmb", None) or {}
-    session_path = _GMB_UI_SESSIONS_DIR / f"gmb-{client.id}.json"
+    session_path = gmb_ui_session_path(client, _GMB_UI_SESSIONS_DIR)
+    owner = gmb_ui_session_owner(client)
+    if owner != client.id:
+        logger.info(
+            "[gmb-ui] using shared GMB session from %s → %s",
+            owner,
+            session_path,
+        )
     logger.info("[gmb-ui] session path=%s  exists=%s",
                 session_path, session_path.exists())
     force_refresh = (env("SEO_REPORT_REFRESH_GMB_UI") or "").lower() in (
@@ -960,11 +980,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             logger.info("[gmb-ui] %s", line)
 
     gmb_ui = _load_gmb_ui(output_dir)
-    if (gmb_ui or {}).get("capture_version") != GMB_UI_CAPTURE_VERSION:
+    version = (gmb_ui or {}).get("capture_version")
+    if version not in (GMB_UI_CAPTURE_VERSION, GMB_API_FALLBACK_VERSION):
         logger.warning(
             "[gmb-ui] gmb_ui.json missing or wrong capture_version "
-            "(expected %s)",
+            "(expected %s or %s)",
             GMB_UI_CAPTURE_VERSION,
+            GMB_API_FALLBACK_VERSION,
         )
         return False
     kpis = _resolve_gmb_ui_kpis(gmb_ui)
@@ -1097,6 +1119,48 @@ def _log_fetch_summary(client_id: str, current: dict[str, Any]) -> None:
     )
 
 
+def _ensure_gmb_api_fallback(
+    client: ClientConfig,
+    output_dir: Path,
+    period: Period,
+    gmb_data: dict[str, Any],
+    *,
+    business_card_ref: Path | None = None,
+) -> None:
+    """When Playwright capture fails, build GMB slide files from the Performance API."""
+    keys = ("overview", "calls", "bookings", "directions", "website_clicks")
+    if gmb_ui_assets_complete(output_dir, keys):
+        return
+    daily = gmb_data.get("daily", pd.DataFrame())
+    api_kpis = _gmb_kpis_from_daily(daily)
+    if not api_kpis:
+        env_key = f"GMB_LOCATION_ID_{client.id.upper()}"
+        logger.warning(
+            "[%s] GMB UI capture incomplete and Performance API returned no "
+            "rows. Set %s in .env (run: python scripts/find_gmb_location_ids.py "
+            "%s) so Docker can fill GMB without a browser.",
+            client.id,
+            env_key,
+            client.id,
+        )
+        return
+    gmb_cfg = client.gmb or {}
+    project = (
+        gmb_cfg.get("ui_project_name")
+        or gmb_cfg.get("project_name")
+        or client.name
+    )
+    materialize_gmb_from_api(
+        output_dir,
+        period_label=period.label,
+        period_start=period.start.isoformat(),
+        period_end=period.end.isoformat(),
+        kpis=api_kpis,
+        project_name=str(project),
+        business_card_path=business_card_ref,
+    )
+
+
 def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     output_dir = client.output_dir / period.label
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1123,6 +1187,14 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
     _log_fetch_summary(client.id, current)
+    if "gmb" not in _disabled_connectors(client):
+        _ensure_gmb_api_fallback(
+            client,
+            output_dir,
+            period,
+            current.get("gmb", {}),
+            business_card_ref=gmb_ref,
+        )
 
     data = _build_report_data(client, period, current, previous, output_dir)
 

@@ -16,8 +16,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
-SESSION = ROOT / "outputs" / "_sessions" / "gmb-deepcleaning.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
+# Same Google account as Origincbd (see config gmb.ui_session_client).
+SESSION = ROOT / "outputs" / "_sessions" / "gmb-origincbd.json"
+PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb-origincbd"
 
 SEARCH_QUERY = "Deep Cleaning Lavage et nettoyage professionnel Colombes"
 PROJECT_NAME = "Deep Cleaning"

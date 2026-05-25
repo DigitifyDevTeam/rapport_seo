@@ -29,6 +29,11 @@ from typing import Iterable
 from playwright.sync_api import Page, sync_playwright
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.config import get_client, gmb_ui_session_path  # noqa: E402
+
 SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
 
 LOC_URL_RE = re.compile(r"/locations?/(\d{6,})")
@@ -167,15 +172,40 @@ def discover(session_file: Path, *, headed: bool, keep_open: bool) -> list[str]:
     return found
 
 
-def _iter_sessions(filter_clients: Iterable[str]) -> list[Path]:
+def _iter_client_sessions(
+    filter_clients: Iterable[str],
+) -> list[tuple[str, Path]]:
+    """Return ``(client_id, session_file)``; honors ``gmb.ui_session_client``."""
     if not SESSIONS_DIR.is_dir():
         print(f"No sessions dir at {SESSIONS_DIR}", file=sys.stderr)
         return []
-    all_sessions = sorted(SESSIONS_DIR.glob("gmb-*.json"))
-    clients = {c.lower().strip() for c in filter_clients if c.strip()}
-    if not clients:
-        return all_sessions
-    return [s for s in all_sessions if s.stem.removeprefix("gmb-") in clients]
+    requested = [c.lower().strip() for c in filter_clients if c.strip()]
+    if not requested:
+        requested = [
+            s.stem.removeprefix("gmb-")
+            for s in sorted(SESSIONS_DIR.glob("gmb-*.json"))
+        ]
+    seen_paths: set[Path] = set()
+    out: list[tuple[str, Path]] = []
+    for client_id in requested:
+        try:
+            client = get_client(client_id)
+        except KeyError:
+            print(f"Unknown client id: {client_id}", file=sys.stderr)
+            continue
+        path = gmb_ui_session_path(client, SESSIONS_DIR)
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        owner = path.stem.removeprefix("gmb-")
+        if owner != client_id:
+            print(
+                f"[{client_id}] using shared session {path.name} "
+                f"(ui_session_client={owner})",
+                flush=True,
+            )
+        out.append((client_id, path))
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -192,19 +222,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    sessions = _iter_sessions(args.clients)
-    if not sessions:
-        print("No matching gmb-*.json in outputs/_sessions/", file=sys.stderr)
+    client_sessions = _iter_client_sessions(args.clients)
+    if not client_sessions:
+        print("No matching clients / sessions.", file=sys.stderr)
         return 1
 
     summary: list[str] = []
-    for session in sessions:
-        client = session.stem.removeprefix("gmb-")
+    for client_id, session in client_sessions:
         ids = discover(
             session, headed=not args.headless, keep_open=args.keep_open,
         )
         if ids:
-            line = (f"GMB_LOCATION_ID_{client.upper()}="
+            line = (f"GMB_LOCATION_ID_{client_id.upper()}="
                     f"locations/{ids[0]}")
             summary.append(line)
 
