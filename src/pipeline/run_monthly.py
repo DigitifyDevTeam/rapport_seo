@@ -665,6 +665,53 @@ def _gmb_ui_assets_ready(output_dir: Path) -> bool:
     return (output_dir / "gmb_card_overview.png").is_file()
 
 
+def _gmb_session_has_performance_url(session_path: Path) -> bool:
+    """True when prepare saved a direct Performance link (#mpd=)."""
+    if not session_path.is_file():
+        return False
+    try:
+        url = str(
+            json.loads(session_path.read_text(encoding="utf-8")).get("url") or "",
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return "#mpd=" in url or "promote/performance" in url
+
+
+def _gmb_ui_runs_in_docker() -> bool:
+    return (env("SEO_REPORT_DOCKER") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _log_gmb_vps_sync_instructions(
+    client: ClientConfig,
+    period: Period | None,
+    *,
+    reason: str,
+) -> None:
+    month = period.label if period is not None else "YYYY-MM"
+    base = f"outputs/{client.id}/{month}"
+    logger.error(
+        "[gmb-ui] %s\n"
+        "[gmb-ui] On the VPS, copying only outputs/_sessions/gmb-%s.json does "
+        "not work (Google CAPTCHA / login wall from the server IP).\n"
+        "[gmb-ui] After a good report on your PC, copy these files to the server:\n"
+        "[gmb-ui]   %s/gmb_ui.json\n"
+        "[gmb-ui]   %s/gmb_business_card.png\n"
+        "[gmb-ui]   %s/gmb_card_*.png\n"
+        "[gmb-ui] Then run: ./scripts/docker_run_client.sh %s %s\n"
+        "[gmb-ui] (do not set SEO_REPORT_REFRESH_GMB_UI=1 unless re-syncing from PC).",
+        reason,
+        client.id,
+        base,
+        base,
+        base,
+        client.id,
+        month,
+    )
+
+
 def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
     """Reuse only when PNGs/KPIs match this report month and capture logic."""
     if not _gmb_ui_assets_ready(output_dir):
@@ -850,6 +897,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
                 output_dir,
             )
             return True
+        if _gmb_ui_runs_in_docker() and not force_refresh:
+            _log_gmb_vps_sync_instructions(
+                client,
+                period,
+                reason="No GMB PNG/KPI files on the server yet.",
+            )
+            return False
     if period and not force_refresh and _gmb_ui_matches_period(output_dir, period):
         logger.info(
             "[gmb-ui] reusing valid captures for %s in %s (no browser)",
@@ -873,6 +927,20 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             session_path,
             client.id,
             period.label if period is not None else "YYYY-MM",
+        )
+        return False
+    if (
+        _gmb_ui_runs_in_docker()
+        and not _gmb_session_has_performance_url(session_path)
+        and not _gmb_ui_assets_ready(output_dir)
+    ):
+        _log_gmb_vps_sync_instructions(
+            client,
+            period,
+            reason=(
+                "Session has no Performance URL (#mpd=); browser capture on the "
+                "VPS will be blocked by Google."
+            ),
         )
         return False
     if not _GMB_UI_EXTRACT_SCRIPT.exists():

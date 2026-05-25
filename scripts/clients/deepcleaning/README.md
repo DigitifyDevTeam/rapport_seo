@@ -53,23 +53,58 @@ node scripts/clarity_ui_extract.js --session outputs\_sessions\clarity-deepclean
 
 ## VPS / Docker
 
-Sessions captured on Windows **do not work** on the server IP (Google login wall / CAPTCHA).
+### One-time: fix file ownership (SFTP "permission denied")
 
-On the VPS, refresh the GMB session once per client:
+Docker writes files as **root**. Your SSH user (`new`) cannot overwrite them by
+SFTP/FileZilla. Run once on the VPS (and after each report run if you forget):
 
 ```bash
-chmod +x scripts/docker_gmb_login.sh
-./scripts/docker_gmb_login.sh deepcleaning
+chmod +x scripts/fix_outputs_perms.sh
+./scripts/fix_outputs_perms.sh
 ```
 
-Then run the report:
+`./scripts/docker_run_client.sh` now fixes permissions automatically after each run.
+
+**Copying only `gmb-deepcleaning.json` to the server is not enough.** Google blocks
+that session on the VPS IP (CAPTCHA / login wall). Your local report works because
+Search runs on your home IP.
+
+### Recommended: sync GMB files from Windows
+
+After a good local run:
+
+```powershell
+python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
+```
+
+Copy to the VPS (same paths under `rapport_seo/`):
+
+- `outputs/deepcleaning/2026-04/gmb_ui.json`
+- `outputs/deepcleaning/2026-04/gmb_business_card.png`
+- `outputs/deepcleaning/2026-04/gmb_card_*.png`
+
+Example (from your PC, adjust host/user):
 
 ```bash
-docker compose build seo-reports
+scp outputs/deepcleaning/2026-04/gmb_* new@ns304208:~/public_html/rapport_seo/outputs/deepcleaning/2026-04/
+```
+
+Then on the server (no refresh flag):
+
+```bash
 ./scripts/docker_run_client.sh deepcleaning 2026-04
 ```
 
-Copy `outputs/_sessions/gmb-deepcleaning.json` from the VPS if you also run reports locally.
+`ui_manual_capture: true` in `config/clients.yaml` skips the browser when those files exist.
+
+### Alternative: login once on the VPS
+
+```bash
+chmod +x scripts/docker_gmb_prepare.sh
+./scripts/docker_gmb_prepare.sh deepcleaning
+```
+
+Open Performance, press ENTER when the URL contains `#mpd=`. Then run the report.
 
 ## Clarity
 
