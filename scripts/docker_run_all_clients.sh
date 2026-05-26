@@ -20,6 +20,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
+# shellcheck source=docker_compose_user.sh
+source "${ROOT}/scripts/docker_compose_user.sh"
 
 MONTH=""
 while [[ $# -gt 0 ]]; do
@@ -50,7 +52,7 @@ if [[ ! -f "${ROOT}/.env" ]]; then
 fi
 
 if [[ -z "${MONTH}" ]]; then
-  MONTH="$(docker compose run --rm --no-TTY seo-reports python -c "
+  MONTH="$(docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports python -c "
 from src.periods import Period
 print(Period.for_scheduled_run().label)
 ")"
@@ -62,7 +64,7 @@ fi
 echo "=== Run all production clients (month=${MONTH}) ==="
 
 read -r -a CLIENTS <<< "$(
-  docker compose run --rm --no-TTY seo-reports python -c "
+  docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports python -c "
 from src.config import load_production_clients
 print(' '.join(c.id for c in load_production_clients()))
 "
@@ -77,7 +79,7 @@ echo "Clients: ${CLIENTS[*]}"
 
 echo ""
 echo "=== GMB session advisory (needs #mpd= in outputs/_sessions/gmb-<client>.json) ==="
-docker compose run --rm --no-TTY seo-reports \
+docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
   python scripts/check_gmb_vps_sessions.py || true
 
 FAILURES=0
@@ -90,7 +92,7 @@ for CLIENT in "${CLIENTS[@]}"; do
     continue
   fi
 
-  if ! docker compose run --rm --no-TTY seo-reports \
+  if ! docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
     python scripts/upload_report_to_drive.py --client "${CLIENT}" --month "${MONTH}"; then
     echo "ERROR: Drive upload failed for ${CLIENT}" >&2
     FAILURES=$((FAILURES + 1))

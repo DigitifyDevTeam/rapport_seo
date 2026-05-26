@@ -15,6 +15,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT}"
+# shellcheck source=scripts/docker_compose_user.sh
+source "${ROOT}/scripts/docker_compose_user.sh"
 
 LOG_DIR="${ROOT}/logs"
 mkdir -p "${LOG_DIR}" "${ROOT}/outputs" "${ROOT}/secrets"
@@ -57,11 +59,13 @@ echo "Building image (rebuild after git pull)..."
 
 if [[ ! -f "${ROOT}/templates/seo_report_template.pptx" ]]; then
   echo "Generating PowerPoint template..."
-  "${COMPOSE[@]}" run --rm --no-TTY seo-reports python scripts/build_template.py
+  "${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
+    python scripts/build_template.py
 fi
 
 set +e
-"${COMPOSE[@]}" run --rm --no-TTY seo-reports python -m src.pipeline.monthly_job "$@"
+"${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
+  python -m src.pipeline.monthly_job "$@"
 EXIT_CODE=$?
 set -e
 
