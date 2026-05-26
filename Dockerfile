@@ -6,6 +6,11 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    HOME=/app \
+    XDG_CACHE_HOME=/app/.cache \
+    XDG_CONFIG_HOME=/app/.config \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
+    PUPPETEER_CACHE_DIR=/app/.cache/puppeteer \
     SEO_REPORT_DOCKER=1 \
     SEO_REPORT_GMB_NO_PROFILE=1 \
     SEO_REPORT_BROWSER_CHANNEL=chromium \
@@ -21,7 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt package.json package-lock.json ./
 RUN pip install -r requirements.txt \
-    && npm ci --omit=dev
+    && npm ci --omit=dev \
+    && npx puppeteer browsers install chrome \
+    && mkdir -p /app/.cache/matplotlib /app/.cache/puppeteer /app/.config \
+    && chmod -R a+rwx /app/.cache /app/.config
 
 COPY config ./config
 COPY src ./src
