@@ -8,4 +8,8 @@ git stash push -u -m "vps-local-$(date +%Y%m%d)" \
   -- cron_docker_run_all_clients.sh scripts/docker_run_all_clients.sh 2>/dev/null \
   || git stash push -u -m "vps-local-$(date +%Y%m%d)" || true
 git pull
-echo "Done. Restash list: git stash list"
+echo "Ensuring shell scripts are executable..."
+find "${ROOT}" -maxdepth 2 -name '*.sh' -type f -exec chmod +x {} +
+find "${ROOT}/scripts" -maxdepth 1 -name '*.sh' -type f -exec chmod +x {} +
+chmod +x "${ROOT}/cron_docker_run_all_clients.sh" "${ROOT}/cron_docker_monthly_reports.sh" 2>/dev/null || true
+echo "Done. Run: ./cron_docker_run_all_clients.sh"

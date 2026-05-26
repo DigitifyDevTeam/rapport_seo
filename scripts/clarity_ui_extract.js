@@ -28,24 +28,6 @@ const path = require("path");
 const readline = require("readline");
 const puppeteer = require("puppeteer");
 
-/** Playwright Chromium in the Docker image (Puppeteer cache is not writable as UID 1011). */
-function resolvePlaywrightChromiumExecutable() {
-  const base = process.env.PLAYWRIGHT_BROWSERS_PATH || "/ms-playwright";
-  if (!fs.existsSync(base)) return null;
-  let entries = [];
-  try {
-    entries = fs.readdirSync(base).filter((name) => name.startsWith("chromium-"));
-  } catch (_) {
-    return null;
-  }
-  entries.sort();
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const exe = path.join(base, entries[i], "chrome-linux", "chrome");
-    if (fs.existsSync(exe)) return exe;
-  }
-  return null;
-}
-
 /** Always store absolute paths in clarity_ui.json (Docker cwd = /app). */
 function chartPathAbsolute(filePath) {
   if (!filePath) return null;
@@ -1473,20 +1455,12 @@ async function main() {
       "--disable-dev-shm-usage",
     );
   }
-  const launchOpts = {
+  const browser = await puppeteer.launch({
     headless: show || record ? false : "new",
     defaultViewport: { width: 1600, height: 900 },
     args: browserArgs,
     ignoreDefaultArgs: ["--enable-automation"],
-  };
-  if (dockerMode) {
-    const chromiumExe = resolvePlaywrightChromiumExecutable();
-    if (chromiumExe) {
-      launchOpts.executablePath = chromiumExe;
-      console.log(`[clarity] using Playwright Chromium: ${chromiumExe}`);
-    }
-  }
-  const browser = await puppeteer.launch(launchOpts);
+  });
   await browser.defaultBrowserContext().setDownloadBehavior({
     policy: "allow",
     downloadPath: downloadDir,

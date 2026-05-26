@@ -5,6 +5,10 @@
 # Panel command (no arguments):
 #   /bin/bash /home/USER/public_html/rapport_seo/cron_docker_run_all_clients.sh
 #
+# If "./cron_docker_run_all_clients.sh" says Permission denied (old checkout):
+#   bash scripts/vps_setup.sh
+#   — or — chmod +x cron_docker_run_all_clients.sh
+#
 # After git pull on the server, this script runs "docker compose build" automatically.
 # Logs: logs/cron_docker_all_YYYY-MM-DD_HHMMSS.log
 #
