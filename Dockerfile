@@ -17,6 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     xvfb \
+    x11vnc \
+    fluxbox \
+    novnc \
+    websockify \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt package.json package-lock.json ./

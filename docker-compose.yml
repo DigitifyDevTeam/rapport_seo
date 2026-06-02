@@ -40,3 +40,28 @@ services:
     stdin_open: true
     tty: true
     entrypoint: ["/app/docker-entrypoint.sh"]
+
+  # Browser UI on the VPS (noVNC). Use ONLY for one-time manual login flows.
+  # Connect: http://<vps-ip>:7900  (password: vnc)
+  seo-vnc:
+    profiles:
+      - tools
+    image: rapport-seo:latest
+    working_dir: /app
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=:0
+    ports:
+      - "7900:7900"
+    volumes:
+      - ./.env:/app/.env:ro
+      - ./secrets:/app/secrets
+      - ./outputs:/app/outputs
+      - ./templates:/app/templates
+      - ./config:/app/config:ro
+      - ./logs:/app/logs
+    shm_size: "2gb"
+    init: true
+    entrypoint: ["/app/docker-entrypoint.sh"]
+    command: ["bash", "/app/scripts/vnc_server.sh"]

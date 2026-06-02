@@ -100,15 +100,12 @@ def _report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
 
 def _dashboard_url_has_month(url: str, period_end: str) -> bool:
     """True when saved Performance URL already targets the report month."""
-    if not url or not period_end or len(period_end) < 7:
-        return False
-    ym = period_end[:7]
-    return (
-        f"from={ym}" in url
-        or f"from%3D{ym}" in url
-        or f"to={ym}" in url
-        or f"to%3D{ym}" in url
-    )
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from src.gmb.performance_url import dashboard_url_has_report_month
+
+    return dashboard_url_has_report_month(url, period_end)
 
 
 def _fr_month_year(iso_date: str) -> str | None:
@@ -2258,8 +2255,28 @@ def main() -> int:
                 "kpis": kpis,
                 "charts": charts,
             }
+            target_month = (cal_end or period_end or "")[:7]
             if not kpis and out_path.exists():
-                _log("manual: empty kpis; preserving previous gmb_ui.json")
+                try:
+                    prior = json.loads(out_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    prior = None
+                prior_month = str((prior or {}).get("report_month") or "").strip()
+                prior_kpis = (prior or {}).get("kpis") or {}
+                has_prior = any(
+                    isinstance(v, dict) and v.get("value")
+                    for v in prior_kpis.values()
+                )
+                if has_prior and prior_month == target_month:
+                    _log(
+                        f"manual: empty kpis; preserving previous gmb_ui.json "
+                        f"for {target_month}",
+                    )
+                else:
+                    _log(
+                        "manual: empty kpis; not preserving gmb_ui.json "
+                        f"(wrong month or empty)",
+                    )
             else:
                 out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             print(f"Wrote {out_path}")
@@ -2293,6 +2310,21 @@ def main() -> int:
         if client_perf_url and not dash_url:
             dash_url = client_perf_url
             _log(f"using per-client Performance URL ({client_id})")
+
+        cal_start, cal_end = _report_calendar_month_bounds(
+            period_end or period_start,
+        )
+        report_ym = (cal_end or period_end or "")[:7]
+        if dash_url and report_ym:
+            root = Path(__file__).resolve().parents[1]
+            if str(root) not in sys.path:
+                sys.path.insert(0, str(root))
+            from src.gmb.performance_url import rewrite_performance_url_month
+
+            aligned = rewrite_performance_url_month(dash_url, report_ym)
+            if aligned != dash_url:
+                _log(f"dashboard-url: aligned to report month {report_ym}")
+                dash_url = aligned
 
         def _capture_from_gmb_app() -> Page | None:
             """Open GBP app, select location, then Performance (fiche screenshot later)."""
@@ -2405,8 +2437,8 @@ def main() -> int:
             )
             if dash_url and _dashboard_url_has_month(dash_url, cal_end):
                 _log(
-                    "date range: dashboard URL already set to %s; skipping picker.",
-                    cal_end[:7],
+                    f"date range: dashboard URL already set to {cal_end[:7]}; "
+                    "skipping picker."
                 )
             else:
                 select_reporting_period(
@@ -2500,8 +2532,28 @@ def main() -> int:
             "charts": resolved_charts,
         }
 
+        target_month = (cal_end or period_end or "")[:7]
         if not kpis and out_path.exists():
-            _log("capture returned empty kpis; preserving previous gmb_ui.json")
+            try:
+                prior = json.loads(out_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                prior = None
+            prior_month = str((prior or {}).get("report_month") or "").strip()
+            prior_kpis = (prior or {}).get("kpis") or {}
+            has_prior = any(
+                isinstance(v, dict) and v.get("value")
+                for v in prior_kpis.values()
+            )
+            if has_prior and prior_month == target_month:
+                _log(
+                    "capture returned empty kpis; preserving previous gmb_ui.json "
+                    f"for {target_month}",
+                )
+            else:
+                _log(
+                    "capture returned empty kpis; not preserving gmb_ui.json "
+                    f"(report={target_month!r}, file={prior_month!r})",
+                )
         else:
             if out_path.exists() and kpis:
                 bak = out_path.with_suffix(".json.bak")

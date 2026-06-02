@@ -4,9 +4,9 @@ Same GMB model as **Origincbd**: prepare once on **Windows**, copy one JSON to t
 
 ## Why this works (and VPS browser login does not)
 
-Origincbd’s `gmb-origincbd.json` contains a **Performance URL with `#mpd=`**. On the server, the pipeline opens that URL directly — no Google Search, no CAPTCHA, no login.
+Origincbd’s `gmb-origincbd.json` contains a **Performance URL with `#mpd=`**. On the VPS, the monthly cron opens that URL and **rewrites `from`/`to` to the report month** (e.g. May → `from%3D2026-05`) — no manual date change each month.
 
-DeepCleaning fails if the session was saved at `business.google.com/locations` only (no `#mpd=`). Redo prepare on Windows.
+DeepCleaning fails if the session was saved at `business.google.com/locations` only (no `#mpd=`). Redo prepare on Windows once, copy JSON to the VPS once.
 
 ## One-time: GMB session (Windows)
 
@@ -81,3 +81,7 @@ node scripts/clients/deepcleaning/clarity_ui_extract.js 2026-04
 
 - **Permission denied on SFTP?** `./scripts/fix_outputs_perms.sh`
 - **GMB advisory before cron:** `check_gmb_vps_sessions.py` (warnings only, cron still runs)
+
+last chat:
+
+You wanted DeepCleaning (and the monthly VPS cron) to handle Google Business Profile like Origincbd: one-time session setup, then hands-off monthly runs. We traced failures to missing execute bits on cron_docker_run_all_clients.sh, VPS/Docker permission issues on outputs/, sessions without a Performance URL (#mpd=), and—when May capture failed—April KPIs being reused on the May report because the saved URL still had from=2026-04 and stale gmb_ui.json was kept. The workflow is prepare GMB on Windows (gmb_ui_prepare.py), copy gmb-deepcleaning.json to the VPS once (import_gmb_sessions.sh), run reports in Docker as your user (docker_compose_user.sh). We fixed cron script permissions in git, added vps_setup.sh / chmod-after-pull, made GMB advisory-only (no abort), aligned the pipeline with per-client sessions, and added automatic month rewriting in Performance URLs plus rules so another month’s GMB data is never reused; cron can auto-import ~/gmb-*.json. Origincbd-style success on the VPS still needs a valid #mpd= session; if Google shows a login wall on the server IP, refresh the session on Windows and re-import once—not every month.

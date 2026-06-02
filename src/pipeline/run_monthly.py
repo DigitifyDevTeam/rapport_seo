@@ -42,6 +42,8 @@ from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
                           load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
+from src.gmb.performance_url import (report_calendar_month_bounds,
+                                     rewrite_performance_url_month)
 from src.insights import generator as insights
 from src.periods import Period
 from src.pipeline.delivery import send_report
@@ -204,7 +206,7 @@ def _build_report_data(client: ClientConfig, period: Period,
     chart_dir = output_dir / "charts"
     chart_dir.mkdir(parents=True, exist_ok=True)
 
-    gmb_ui = _load_gmb_ui(output_dir)
+    gmb_ui = _load_gmb_ui(output_dir, report_month=period.label)
     gmb_ui_chart = _resolve_gmb_ui_chart(gmb_ui, output_dir)
     gmb_ui_charts = _resolve_gmb_ui_charts(gmb_ui, output_dir)
     gmb_ui_kpis = _resolve_gmb_ui_kpis(gmb_ui)
@@ -767,21 +769,52 @@ def _read_json_safe(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _load_gmb_ui(output_dir: Path) -> dict[str, Any] | None:
+def _gmb_ui_matches_report_month(
+    data: dict[str, Any] | None,
+    report_month: str | None,
+) -> bool:
+    if not report_month or not data:
+        return True
+    saved = str(data.get("report_month") or "").strip()
+    if not saved:
+        return True
+    return saved == report_month
+
+
+def _load_gmb_ui(
+    output_dir: Path,
+    *,
+    report_month: str | None = None,
+) -> dict[str, Any] | None:
     """Load the JSON written by ``scripts/gmb_ui_extract.py`` if present.
 
     If the main file has empty kpis, fall back to the ``.bak`` copy that a
-    prior successful capture may have left.
+    prior successful capture may have left. Ignores files for another month
+    when ``report_month`` is set (avoids April KPIs on a May report).
     """
     candidate = output_dir / "gmb_ui.json"
     data = _read_json_safe(candidate)
     if data and (data.get("kpis") or {}):
-        return data
+        if _gmb_ui_matches_report_month(data, report_month):
+            return data
+        logger.info(
+            "[gmb-ui] ignoring %s (report_month=%s, need %s)",
+            candidate.name,
+            data.get("report_month"),
+            report_month,
+        )
+        data = None
     bak = candidate.with_suffix(".json.bak")
     bak_data = _read_json_safe(bak)
     if bak_data and (bak_data.get("kpis") or {}):
-        logger.info("[gmb-ui] main gmb_ui.json has empty kpis; using .bak")
-        return bak_data
+        if _gmb_ui_matches_report_month(bak_data, report_month):
+            logger.info("[gmb-ui] main gmb_ui.json has empty kpis; using .bak")
+            return bak_data
+        logger.info(
+            "[gmb-ui] ignoring .bak (report_month=%s, need %s)",
+            bak_data.get("report_month"),
+            report_month,
+        )
     return data
 
 
@@ -876,7 +909,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         "1", "true", "yes", "on",
     )
     if gmb_cfg.get("ui_manual_capture"):
-        existing = _load_gmb_ui(output_dir)
+        existing = _load_gmb_ui(
+            output_dir,
+            report_month=period.label if period else None,
+        )
         if _resolve_gmb_ui_kpis(existing) or _gmb_ui_assets_ready(output_dir):
             logger.info(
                 "[gmb-ui] using manual UI assets in %s (no browser)",
@@ -1005,12 +1041,21 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             ).strip()
         except (OSError, json.JSONDecodeError):
             dash_from_session = ""
+    period_end_iso = period.end.isoformat() if period else ""
     if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
+        perf_url = rewrite_performance_url_month(
+            perf_url,
+            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        ) if period else perf_url
         cmd.extend(["--dashboard-url", perf_url])
         logger.info("[gmb-ui] Performance URL from %s", perf_url_file.name)
     elif dash_from_session and (
         "#mpd=" in dash_from_session or "promote/performance" in dash_from_session
     ):
+        dash_from_session = rewrite_performance_url_month(
+            dash_from_session,
+            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        ) if period else dash_from_session
         cmd.extend(["--dashboard-url", dash_from_session])
         logger.info(
             "[gmb-ui] Performance URL from %s (saved at login)",
@@ -1044,7 +1089,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         if line:
             logger.info("[gmb-ui] %s", line)
 
-    gmb_ui = _load_gmb_ui(output_dir)
+    gmb_ui = _load_gmb_ui(
+        output_dir,
+        report_month=period.label if period else None,
+    )
     version_ok = (gmb_ui or {}).get("capture_version") == GMB_UI_CAPTURE_VERSION
     kpis = _resolve_gmb_ui_kpis(gmb_ui)
     if not version_ok:

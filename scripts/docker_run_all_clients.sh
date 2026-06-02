@@ -77,6 +77,12 @@ fi
 
 echo "Clients: ${CLIENTS[*]}"
 
+if compgen -G "${HOME}/gmb-*.json" > /dev/null 2>&1; then
+  echo ""
+  echo "=== GMB sessions in ~ (auto-import if present) ==="
+  "${ROOT}/scripts/import_gmb_sessions.sh" all "${HOME}" || true
+fi
+
 echo ""
 echo "=== GMB session advisory (needs #mpd= in outputs/_sessions/gmb-<client>.json) ==="
 docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
