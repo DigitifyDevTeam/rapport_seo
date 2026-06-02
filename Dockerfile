@@ -14,6 +14,7 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-venv \
     tesseract-ocr \
     tesseract-ocr-fra \
     nodejs \
@@ -27,8 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY requirements.txt package.json package-lock.json ./
 RUN python -m venv /opt/venv \
-    && pip install --upgrade pip setuptools wheel \
-    && pip install -r requirements.txt \
+    && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
+    && /opt/venv/bin/pip install -r requirements.txt \
     && npm ci --omit=dev
 
 COPY config ./config
