@@ -73,9 +73,12 @@ _start_websockify() {
 }
 
 _port_open() {
-  python - <<'PY'
-import socket, sys
-host, port = sys.argv[1], int(sys.argv[2])
+  local host="${1:?host}"
+  local port="${2:?port}"
+  python - <<PY
+import socket
+host = ${host!r}
+port = int(${port!r})
 s = socket.socket()
 s.settimeout(0.5)
 try:
@@ -92,8 +95,10 @@ _start_xvfb
 _start_fluxbox
 
 # Clean up any stray processes from previous starts.
-pkill -x websockify 2>/dev/null || true
-pkill -x x11vnc 2>/dev/null || true
+pkill -f "websockify.*0\\.0\\.0\\.0:7900" 2>/dev/null || true
+pkill -f "websockify.*:7900" 2>/dev/null || true
+pkill -f x11vnc 2>/dev/null || true
+sleep 0.4
 
 X11VNC_PID="$(_start_x11vnc)"
 WEBSOCKIFY_PID="$(_start_websockify)"
