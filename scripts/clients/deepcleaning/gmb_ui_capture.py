@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -44,6 +45,9 @@ def main() -> int:
         "--screenshot", str(out_dir / "gmb_dashboard.png"),
         "--project-name", "Deep Cleaning",
         "--profile", str(PROFILE),
+        # In Docker we usually don't have system Google Chrome installed.
+        # Force Playwright's bundled Chromium so --show works inside noVNC.
+        "--channel", "chromium" if os.environ.get("SEO_REPORT_DOCKER") else "chrome",
         "--manual",
         "--manual-skip-period",
         "--no-auto-period",
