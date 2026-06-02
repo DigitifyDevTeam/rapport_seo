@@ -9,7 +9,9 @@ ENV PYTHONUNBUFFERED=1 \
     SEO_REPORT_DOCKER=1 \
     SEO_REPORT_GMB_NO_PROFILE=1 \
     SEO_REPORT_BROWSER_CHANNEL=chromium \
-    SEO_REPORT_EXPORT_PDF=false
+    SEO_REPORT_EXPORT_PDF=false \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
@@ -24,7 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt package.json package-lock.json ./
-RUN pip install -r requirements.txt \
+RUN python -m venv /opt/venv \
+    && pip install --upgrade pip setuptools wheel \
+    && pip install -r requirements.txt \
     && npm ci --omit=dev
 
 COPY config ./config
