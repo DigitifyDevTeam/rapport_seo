@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
     npm \
     xvfb \
+    x11-utils \
     x11vnc \
     fluxbox \
     novnc \
