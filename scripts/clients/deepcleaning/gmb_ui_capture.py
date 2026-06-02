@@ -45,9 +45,9 @@ def main() -> int:
         "--screenshot", str(out_dir / "gmb_dashboard.png"),
         "--project-name", "Deep Cleaning",
         "--profile", str(PROFILE),
-        # In Docker we usually don't have system Google Chrome installed.
-        # Force Playwright's bundled Chromium so --show works inside noVNC.
-        "--channel", "chromium" if os.environ.get("SEO_REPORT_DOCKER") else "chrome",
+        # On VPS/Docker we usually don't have system Google Chrome installed.
+        # Always force Playwright's bundled Chromium so --show works inside noVNC.
+        "--channel", "chromium",
         "--manual",
         "--manual-skip-period",
         "--no-auto-period",
