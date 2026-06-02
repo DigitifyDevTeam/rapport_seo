@@ -17,7 +17,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
 SESSION = ROOT / "outputs" / "_sessions" / "gmb-deepcleaning.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
 
 
 def _period_bounds(month: str) -> tuple[str, str]:
@@ -44,7 +43,6 @@ def main() -> int:
         "--out", str(out_dir / "gmb_ui.json"),
         "--screenshot", str(out_dir / "gmb_dashboard.png"),
         "--project-name", "Deep Cleaning",
-        "--profile", str(PROFILE),
         # On VPS/Docker we usually don't have system Google Chrome installed.
         # Always force Playwright's bundled Chromium so --show works inside noVNC.
         "--channel", "chromium",
