@@ -1,8 +1,8 @@
-"""CC Habitat — manual GMB capture fallback.
+"""CC Habitat — manual GMB capture (noVNC on VPS, separate Gmail).
 
 Usage::
 
-    python scripts/clients/cchabitat/gmb_ui_capture.py 2026-04
+    python scripts/clients/cchabitat/gmb_ui_capture.py 2026-05
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
 SESSION = ROOT / "outputs" / "_sessions" / "gmb-cchabitat.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb-cchabitat"
 
 
 def _period_bounds(month: str) -> tuple[str, str]:
@@ -40,14 +39,17 @@ def main() -> int:
         "--session", str(SESSION),
         "--out", str(out_dir / "gmb_ui.json"),
         "--screenshot", str(out_dir / "gmb_dashboard.png"),
-        "--project-name", "CC Habitat",
-        "--profile", str(PROFILE),
+        "--project-name", "Concept Confort Habitat",
+        "--business-name", "Concept Confort Habitat couvreur Val-de-Marne",
+        "--location-name", "cc-habitat.com",
+        "--channel", "chromium",
         "--manual",
         "--manual-skip-period",
         "--no-auto-period",
         "--period-start", period_start,
         "--period-end", period_end,
         "--show",
+        "--client-id", "cchabitat",
     ]
     return subprocess.call(cmd, cwd=str(ROOT))
 

@@ -2201,6 +2201,15 @@ def main() -> int:
             business_card_out = out_dir / "gmb_business_card.png"
             charts: dict[str, str | None] = {}
             kpis: dict[str, dict[str, str | None]] = {}
+            # Manual capture: we may optionally screenshot the public fiche from
+            # a "google.com/search" tab. Initialize search_query to avoid
+            # UnboundLocalError when wrapper scripts only pass --project-name.
+            search_query = (
+                "" if args.no_search else (
+                    _default_query(args.business_name, args.location_name)
+                    or project_name
+                )
+            )
             for tab_page in context.pages:
                 if _search_is_blocked(tab_page):
                     continue

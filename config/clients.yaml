@@ -65,6 +65,8 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
+      # Same Google account as DeepCleaning — reuse its VPS session (#mpd= URL).
+      ui_session_client: deepcleaning
       ui_prefer_gmb_app: true
       ui_project_name: "Digitify"
       ui_search_query: "Digitify"
@@ -132,6 +134,8 @@ clients:
     gmb:
       account_id: ""
       location_id: ""
+      # Same Google account as DeepCleaning — reuse its VPS session (#mpd= URL).
+      ui_session_client: deepcleaning
       ui_prefer_gmb_app: true
       ui_project_name: "Origin"
       # Fallback Google Search query if GBP list does not open Performance.
