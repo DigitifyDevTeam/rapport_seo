@@ -1,4 +1,4 @@
-"""GA4 « Vue d'ensemble » — KPI strip + single daily line (API, 25/M → 25/M+1)."""
+"""GA4 « Vue d'ensemble » — KPI strip + single daily line (API, 25/(M-1) → 25/M)."""
 
 from __future__ import annotations
 

@@ -3,8 +3,8 @@
 A reporting period is identified by ``YYYY-MM`` (the report month *M*).
 Data windows use a fixed day-of-month anchor (``REPORT_CYCLE_DAY``, default **25**):
 
-- **Current period:** 25/M → 25/(M+1)  (e.g. April report → 25 avril – 25 mai)
-- **Previous period:** 25/(M-1) → 25/M
+- **Current period:** 25/(M-1) → 25/M  (e.g. May report → 25 avril – 25 mai)
+- **Previous period:** 25/(M-2) → 25/(M-1)
 
 Override the anchor with ``REPORT_CYCLE_DAY`` in ``.env`` if needed.
 """
@@ -59,17 +59,17 @@ def _shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
 
 def cycle_start_date(year: int, month: int,
                        *, anchor_day: int | None = None) -> date:
-    """First day of the reporting window (anchor day of report month *M*)."""
+    """First day of the reporting window (anchor day of month *M-1*)."""
     anchor = report_cycle_day() if anchor_day is None else anchor_day
-    return date(year, month, anchor)
+    prev_year, prev_month = _shift_month(year, month, -1)
+    return date(prev_year, prev_month, anchor)
 
 
 def cycle_end_date(year: int, month: int,
                      *, anchor_day: int | None = None) -> date:
-    """Last day of the reporting window (anchor day of month *M+1*)."""
+    """Last day of the reporting window (anchor day of report month *M*)."""
     anchor = report_cycle_day() if anchor_day is None else anchor_day
-    next_year, next_month = _shift_month(year, month, 1)
-    return date(next_year, next_month, anchor)
+    return date(year, month, anchor)
 
 
 def format_date_fr(value: date) -> str:

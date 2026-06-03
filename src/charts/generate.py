@@ -121,7 +121,7 @@ def ga4_traffic_overview(
 ) -> Path:
     """Build the GA4 traffic slide image.
 
-    Top row: « Vue d'ensemble » (25/M→25/M+1, one line) and « Utilisateurs actifs
+    Top row: « Vue d'ensemble » (25/(M-1)→25/M, one line) and « Utilisateurs actifs
     par Pays » (country table from GA4 Data API).
     Bottom: sessions by channel.
     """

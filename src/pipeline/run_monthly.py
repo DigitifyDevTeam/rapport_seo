@@ -1108,6 +1108,19 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
         return False
     if gmb_ui.get("report_month") != period.label:
         return False
+    if (
+        gmb_ui.get("period_start") != period.start.isoformat()
+        or gmb_ui.get("period_end") != period.end.isoformat()
+    ):
+        logger.info(
+            "[gmb-ui] period mismatch in %s (%s–%s vs %s–%s) — will re-capture",
+            output_dir,
+            gmb_ui.get("period_start"),
+            gmb_ui.get("period_end"),
+            period.start.isoformat(),
+            period.end.isoformat(),
+        )
+        return False
     card = output_dir / "gmb_business_card.png"
     if card.is_file() and not is_valid_public_fiche_png(card):
         logger.info(
