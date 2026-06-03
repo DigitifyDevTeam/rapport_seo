@@ -151,7 +151,10 @@ def draw_vue_ensemble(
     interval = max(3, span_days // 8)
     ax_chart.xaxis.set_major_locator(mdates.DayLocator(interval=interval))
     ax_chart.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-    ax_chart.set_xlim(cur["date"].min(), cur["date"].max())
+    ax_chart.set_xlim(
+        pd.Timestamp(period_start),
+        pd.Timestamp(period_end),
+    )
     ax_chart.grid(True, axis="y", linewidth=0.5, color="#E8EAED")
     ax_chart.spines["top"].set_visible(False)
     ax_chart.spines["left"].set_visible(False)

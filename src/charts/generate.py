@@ -61,16 +61,23 @@ def _save(fig, output: Path, *, pad: float = 0.06) -> Path:
     return output
 
 
-def _format_date_axis(ax, dates: pd.Series, *, max_ticks: int = 7,
-                      rotation: int = 0) -> None:
+def _format_date_axis(
+    ax,
+    dates: pd.Series,
+    *,
+    max_ticks: int = 7,
+    rotation: int = 0,
+    xlim_start: date | None = None,
+    xlim_end: date | None = None,
+) -> None:
     """Readable daily ticks without overlap (25→25 reporting windows)."""
-    if dates.empty:
+    if dates.empty and xlim_start is None:
         return
     series = pd.to_datetime(dates).dropna()
-    if series.empty:
+    if series.empty and xlim_start is None:
         return
-    start = series.min()
-    end = series.max()
+    start = pd.Timestamp(xlim_start) if xlim_start else series.min()
+    end = pd.Timestamp(xlim_end) if xlim_end else series.max()
     span_days = max((end - start).days, 1)
     interval = max(1, (span_days + max_ticks - 1) // max_ticks)
     ax.set_xlim(start, end)
@@ -157,7 +164,12 @@ def ga4_traffic_overview(
     else:
         _draw_identifiant_pays(ax_country, countries_df)
 
-    _draw_channels(ax_channels, channel_daily_df)
+    _draw_channels(
+        ax_channels,
+        channel_daily_df,
+        period_start=period_start,
+        period_end=period_end,
+    )
     return _save(fig, output)
 
 
@@ -323,7 +335,13 @@ def _draw_country(ax, countries_df: pd.DataFrame) -> None:
     _draw_identifiant_pays(ax, countries_df)
 
 
-def _draw_channels(ax, channel_daily_df: pd.DataFrame) -> None:
+def _draw_channels(
+    ax,
+    channel_daily_df: pd.DataFrame,
+    *,
+    period_start: date | None = None,
+    period_end: date | None = None,
+) -> None:
     ax.set_title("Acquisition de trafic: Groupe de canaux", fontsize=11, pad=6)
     required = {"date", "channel", "sessions"}
     if channel_daily_df.empty or not required.issubset(channel_daily_df.columns):
@@ -334,10 +352,21 @@ def _draw_channels(ax, channel_daily_df: pd.DataFrame) -> None:
     top_channels = totals.head(5)["channel"].tolist()
     filtered = channel_daily_df[channel_daily_df["channel"].isin(top_channels)].copy()
     filtered["date"] = pd.to_datetime(filtered["date"])
+    if period_start is not None and period_end is not None:
+        start = pd.Timestamp(period_start)
+        end = pd.Timestamp(period_end)
+        filtered = filtered[(filtered["date"] >= start) & (filtered["date"] <= end)]
     for channel in top_channels:
         series = filtered[filtered["channel"] == channel].sort_values("date")
         ax.plot(series["date"], series["sessions"], linewidth=1.8, label=channel)
-    _format_date_axis(ax, filtered["date"], max_ticks=8, rotation=0)
+    _format_date_axis(
+        ax,
+        filtered["date"],
+        max_ticks=8,
+        rotation=0,
+        xlim_start=period_start,
+        xlim_end=period_end,
+    )
     ax.grid(True, axis="y", linewidth=0.6)
     ax.legend(frameon=False, fontsize=7, ncol=3, loc=LEGEND_LOC)
     ax.margins(x=0.02)

@@ -1,12 +1,14 @@
 """Reporting period helpers.
 
 A reporting period is identified by ``YYYY-MM`` (the report month *M*).
-Data windows use a fixed day-of-month anchor (``REPORT_CYCLE_DAY``, default **25**):
+Data windows always use anchor day **25** (not configurable):
 
 - **Current period:** 25/(M-1) → 25/M  (e.g. May report → 25 avril – 25 mai)
 - **Previous period:** 25/(M-2) → 25/(M-1)
 
-Override the anchor with ``REPORT_CYCLE_DAY`` in ``.env`` if needed.
+Use ``SEO_REPORT_SCHEDULE_DAY`` in ``.env`` only for when the VPS cron runs.
+``REPORT_CYCLE_DAY`` is legacy alias for the schedule day and does **not** change
+the 25→25 analysis window.
 """
 
 from __future__ import annotations
@@ -16,14 +18,13 @@ from dataclasses import dataclass
 from datetime import date, datetime
 
 
+# Fixed business rule: every report month M covers 25/(M-1) → 25/M.
+REPORTING_ANCHOR_DAY = 25
+
+
 def report_cycle_day() -> int:
-    """Day-of-month anchor for 25→25 reporting windows."""
-    raw = (os.environ.get("REPORT_CYCLE_DAY") or "25").strip()
-    try:
-        day = int(raw)
-    except ValueError:
-        day = 25
-    return max(1, min(28, day))
+    """Day-of-month anchor for 25→25 reporting windows (always 25)."""
+    return REPORTING_ANCHOR_DAY
 
 
 def schedule_day_of_month() -> int:
@@ -110,8 +111,8 @@ class Period:
     def for_scheduled_run(cls, today: date | None = None) -> "Period":
         """Report month used when the monthly job runs on the schedule day.
 
-        On or after ``SEO_REPORT_SCHEDULE_DAY`` (default: ``REPORT_CYCLE_DAY``,
-        e.g. 25), the job reports on the **current** calendar month (*M*).
+        On or after ``SEO_REPORT_SCHEDULE_DAY`` (or legacy ``REPORT_CYCLE_DAY``),
+        the job reports on the **current** calendar month (*M*).
         Before that day, it uses the previous calendar month.
         """
         today = today or date.today()

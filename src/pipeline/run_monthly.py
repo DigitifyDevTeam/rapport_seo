@@ -47,7 +47,7 @@ from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
 from src.gmb.performance_url import (report_calendar_month_bounds,
                                      rewrite_performance_url_month)
 from src.insights import generator as insights
-from src.periods import Period
+from src.periods import REPORTING_ANCHOR_DAY, Period
 from src.pipeline.delivery import send_report
 from src.reporting.export_pdf import export as export_pdf
 from src.reporting.gmb_business_card import (
@@ -1651,11 +1651,29 @@ def _log_fetch_summary(client_id: str, current: dict[str, Any]) -> None:
     )
 
 
+def _warn_if_legacy_cycle_day_env() -> None:
+    raw = (env("REPORT_CYCLE_DAY") or "").strip()
+    if raw and raw != str(REPORTING_ANCHOR_DAY):
+        logger.warning(
+            "REPORT_CYCLE_DAY=%s does not change the analysis window "
+            "(always day %s: 25/(M-1)→25/M). Use SEO_REPORT_SCHEDULE_DAY for cron timing.",
+            raw,
+            REPORTING_ANCHOR_DAY,
+        )
+
+
 def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     output_dir = client.output_dir / period.label
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("[%s] fetching data for %s", client.id, period.label)
+    _warn_if_legacy_cycle_day_env()
+    logger.info(
+        "[%s] fetching data for %s (%s → %s)",
+        client.id,
+        period.label,
+        period.start.isoformat(),
+        period.end.isoformat(),
+    )
     _ensure_ga4_ui_charts(client, output_dir, period)
     _capture_clarity_ui(
         client, output_dir, period, refresh=_RUNTIME_REFRESH_CLARITY,
