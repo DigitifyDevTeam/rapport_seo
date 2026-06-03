@@ -57,9 +57,9 @@ fi
 echo "Building image (rebuild after git pull)..."
 "${COMPOSE[@]}" build seo-reports
 
-echo "Ensuring PowerPoint template is up to date (backlinks / no merci slide)..."
+echo "Regenerating PowerPoint template (backlinks, no merci slide)..."
 "${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
-  python scripts/build_template.py --force-if-stale
+  python scripts/build_template.py --force
 
 set +e
 "${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \

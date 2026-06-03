@@ -20,8 +20,11 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 import matplotlib
 
@@ -35,10 +38,24 @@ from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
-# Bump when slide order/structure changes (cron + run_monthly auto-rebuild).
-TEMPLATE_BUILD_VERSION = "2026-06-v2-backlinks-no-merci"
-TEMPLATE_VERSION_PATH = TEMPLATE_PATH.parent / ".template_build_version"
+DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
+# Bump when slide order/structure changes (keep in sync with ensure_template.py).
+TEMPLATE_BUILD_VERSION = "2026-06-v3-backlinks-no-merci"
+
+
+def resolve_template_path(output: str | None = None) -> Path:
+    """Target .pptx: ``--output``, then ``SEO_REPORT_TEMPLATE_PATH``, then default."""
+    if output:
+        return Path(output).expanduser().resolve()
+    load_dotenv(PROJECT_ROOT / ".env")
+    override = (os.environ.get("SEO_REPORT_TEMPLATE_PATH") or "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    return DEFAULT_TEMPLATE_PATH
+
+
+def template_version_path(pptx_path: Path) -> Path:
+    return pptx_path.parent / ".template_build_version"
 
 # Modern analytics deck: slate base + teal + violet (professional contrast)
 PRIMARY = RGBColor(0x0F, 0x17, 0x2A)
@@ -1018,20 +1035,22 @@ def build_thank_you_slide(prs: Presentation) -> None:
                   align=PP_ALIGN.CENTER)
 
 
-def _installed_template_version() -> str | None:
-    if not TEMPLATE_VERSION_PATH.is_file():
+def _installed_template_version(pptx_path: Path) -> str | None:
+    version_path = template_version_path(pptx_path)
+    if not version_path.is_file():
         return None
     try:
-        return TEMPLATE_VERSION_PATH.read_text(encoding="utf-8").strip() or None
+        return version_path.read_text(encoding="utf-8").strip() or None
     except OSError:
         return None
 
 
-def template_needs_rebuild() -> bool:
+def template_needs_rebuild(pptx_path: Path | None = None) -> bool:
     """True when the .pptx is missing or was built from older deck code."""
-    if not TEMPLATE_PATH.is_file():
+    target = pptx_path or resolve_template_path()
+    if not target.is_file():
         return True
-    return _installed_template_version() != TEMPLATE_BUILD_VERSION
+    return _installed_template_version(target) != TEMPLATE_BUILD_VERSION
 
 
 def _parse_args() -> argparse.Namespace:
@@ -1048,11 +1067,16 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite only when .template_build_version is outdated (used by cron).",
     )
+    parser.add_argument(
+        "--output",
+        default="",
+        help="Output .pptx path (default: SEO_REPORT_TEMPLATE_PATH or templates/).",
+    )
     return parser.parse_args()
 
 
-def _write_template_version() -> None:
-    TEMPLATE_VERSION_PATH.write_text(
+def _write_template_version(pptx_path: Path) -> None:
+    template_version_path(pptx_path).write_text(
         f"{TEMPLATE_BUILD_VERSION}\n",
         encoding="utf-8",
     )
@@ -1088,27 +1112,30 @@ def _build_presentation() -> Presentation:
     return prs
 
 
-def generate_template(*, force: bool = False) -> Path:
-    """Build or refresh ``seo_report_template.pptx`` when ``force`` or version is stale."""
-    if TEMPLATE_PATH.exists() and not force and not template_needs_rebuild():
-        return TEMPLATE_PATH
+def generate_template(*, force: bool = False,
+                      output: Path | None = None) -> Path:
+    """Build or refresh the deck when ``force`` or version is stale."""
+    target = output or resolve_template_path()
+    if target.exists() and not force and not template_needs_rebuild(target):
+        return target
 
-    TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
     prs = _build_presentation()
-    prs.save(TEMPLATE_PATH)
-    _write_template_version()
-    return TEMPLATE_PATH
+    prs.save(target)
+    _write_template_version(target)
+    return target
 
 
 def main() -> None:
     args = _parse_args()
+    target = resolve_template_path(args.output or None)
     force = bool(args.force)
-    if args.force_if_stale and template_needs_rebuild():
+    if args.force_if_stale and template_needs_rebuild(target):
         force = True
 
-    if TEMPLATE_PATH.exists() and not force:
+    if target.exists() and not force:
         print(
-            f"Template already exists at {TEMPLATE_PATH}.\n"
+            f"Template already exists at {target}.\n"
             "Edit that file in PowerPoint to change layout or branding.\n"
             "Monthly reports use it as-is (placeholders only).\n"
             "To regenerate from code, run: python scripts/build_template.py --force",
@@ -1116,7 +1143,7 @@ def main() -> None:
         )
         sys.exit(0)
 
-    path = generate_template(force=True)
+    path = generate_template(force=True, output=target)
     print(f"Template generated at {path} (version {TEMPLATE_BUILD_VERSION})")
 
 

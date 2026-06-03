@@ -10,7 +10,7 @@ CLIENT="${1:?client id}"
 MONTH="${2:-}"
 docker compose build seo-reports
 docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
-  python scripts/build_template.py --force-if-stale
+  python scripts/build_template.py --force
 ARGS=(python -m src.pipeline.run_monthly --client "${CLIENT}")
 if [[ -n "${MONTH}" ]]; then
   ARGS+=(--month "${MONTH}")

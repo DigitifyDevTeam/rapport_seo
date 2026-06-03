@@ -36,16 +36,26 @@ def main() -> int:
         worst = max(worst, _status(FAIL, ".env missing — copy from your PC"))
 
     from src.config import TEMPLATE_PATH
+    from src.reporting.ensure_template import template_is_current
 
-    if TEMPLATE_PATH.is_file():
-        worst = max(worst, _status(OK, f"Report template: {TEMPLATE_PATH}"))
+    if template_is_current(TEMPLATE_PATH):
+        worst = max(worst, _status(OK, f"Report template OK: {TEMPLATE_PATH}"))
+    elif TEMPLATE_PATH.is_file():
+        worst = max(
+            worst,
+            _status(
+                FAIL,
+                f"Outdated template {TEMPLATE_PATH} (old Merci deck?). Run: "
+                f"python scripts/build_template.py --force",
+            ),
+        )
     else:
         worst = max(
             worst,
             _status(
                 FAIL,
                 f"Missing report template {TEMPLATE_PATH} — run "
-                f"`python scripts/build_template.py` or copy your .pptx from Windows",
+                f"`python scripts/build_template.py --force`",
             ),
         )
 
