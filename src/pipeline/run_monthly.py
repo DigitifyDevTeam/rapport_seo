@@ -1663,6 +1663,7 @@ def _warn_if_legacy_cycle_day_env() -> None:
 
 
 def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
+    _ensure_report_template()
     output_dir = client.output_dir / period.label
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1734,6 +1735,38 @@ def _resolve_period(month: str | None) -> Period:
     if month:
         return Period.parse(month)
     return Period.previous_complete()
+
+
+def _ensure_report_template() -> None:
+    """Rebuild deck when code changed (backlinks, no merci) but .pptx on disk is old."""
+    build_script = PROJECT_ROOT / "scripts" / "build_template.py"
+    if not build_script.is_file():
+        return
+    try:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "build_template", build_script,
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("build_template spec")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        if mod.template_needs_rebuild():
+            logger.info(
+                "Regenerating %s (template version %s)",
+                TEMPLATE_PATH,
+                mod.TEMPLATE_BUILD_VERSION,
+            )
+            mod.generate_template(force=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Could not auto-refresh report template (%s). "
+            "Run: python scripts/build_template.py --force",
+            exc,
+        )
+        if not TEMPLATE_PATH.is_file():
+            raise
 
 
 def main(argv: list[str] | None = None) -> int:

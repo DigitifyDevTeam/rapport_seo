@@ -36,6 +36,9 @@ from pptx.util import Inches, Pt
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
+# Bump when slide order/structure changes (cron + run_monthly auto-rebuild).
+TEMPLATE_BUILD_VERSION = "2026-06-v2-backlinks-no-merci"
+TEMPLATE_VERSION_PATH = TEMPLATE_PATH.parent / ".template_build_version"
 
 # Modern analytics deck: slate base + teal + violet (professional contrast)
 PRIMARY = RGBColor(0x0F, 0x17, 0x2A)
@@ -1015,6 +1018,22 @@ def build_thank_you_slide(prs: Presentation) -> None:
                   align=PP_ALIGN.CENTER)
 
 
+def _installed_template_version() -> str | None:
+    if not TEMPLATE_VERSION_PATH.is_file():
+        return None
+    try:
+        return TEMPLATE_VERSION_PATH.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def template_needs_rebuild() -> bool:
+    """True when the .pptx is missing or was built from older deck code."""
+    if not TEMPLATE_PATH.is_file():
+        return True
+    return _installed_template_version() != TEMPLATE_BUILD_VERSION
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Generate the SEO report PowerPoint template from code.",
@@ -1024,22 +1043,22 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite templates/seo_report_template.pptx if it already exists.",
     )
+    parser.add_argument(
+        "--force-if-stale",
+        action="store_true",
+        help="Overwrite only when .template_build_version is outdated (used by cron).",
+    )
     return parser.parse_args()
 
 
-def main() -> None:
-    args = _parse_args()
-    if TEMPLATE_PATH.exists() and not args.force:
-        print(
-            f"Template already exists at {TEMPLATE_PATH}.\n"
-            "Edit that file in PowerPoint to change layout or branding.\n"
-            "Monthly reports use it as-is (placeholders only).\n"
-            "To regenerate from code, run: python scripts/build_template.py --force",
-            file=sys.stderr,
-        )
-        sys.exit(0)
+def _write_template_version() -> None:
+    TEMPLATE_VERSION_PATH.write_text(
+        f"{TEMPLATE_BUILD_VERSION}\n",
+        encoding="utf-8",
+    )
 
-    TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+def _build_presentation() -> Presentation:
     prs = Presentation()
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
@@ -1066,9 +1085,39 @@ def main() -> None:
     build_backlinks_slide(prs, part=1)
     build_backlinks_slide(prs, part=2)
     build_final_summary_slide(prs)
+    return prs
 
+
+def generate_template(*, force: bool = False) -> Path:
+    """Build or refresh ``seo_report_template.pptx`` when ``force`` or version is stale."""
+    if TEMPLATE_PATH.exists() and not force and not template_needs_rebuild():
+        return TEMPLATE_PATH
+
+    TEMPLATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    prs = _build_presentation()
     prs.save(TEMPLATE_PATH)
-    print(f"Template generated at {TEMPLATE_PATH}")
+    _write_template_version()
+    return TEMPLATE_PATH
+
+
+def main() -> None:
+    args = _parse_args()
+    force = bool(args.force)
+    if args.force_if_stale and template_needs_rebuild():
+        force = True
+
+    if TEMPLATE_PATH.exists() and not force:
+        print(
+            f"Template already exists at {TEMPLATE_PATH}.\n"
+            "Edit that file in PowerPoint to change layout or branding.\n"
+            "Monthly reports use it as-is (placeholders only).\n"
+            "To regenerate from code, run: python scripts/build_template.py --force",
+            file=sys.stderr,
+        )
+        sys.exit(0)
+
+    path = generate_template(force=True)
+    print(f"Template generated at {path} (version {TEMPLATE_BUILD_VERSION})")
 
 
 if __name__ == "__main__":

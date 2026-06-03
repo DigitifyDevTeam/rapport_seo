@@ -57,11 +57,9 @@ fi
 echo "Building image (rebuild after git pull)..."
 "${COMPOSE[@]}" build seo-reports
 
-if [[ ! -f "${ROOT}/templates/seo_report_template.pptx" ]]; then
-  echo "Generating PowerPoint template..."
-  "${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
-    python scripts/build_template.py
-fi
+echo "Ensuring PowerPoint template is up to date (backlinks / no merci slide)..."
+"${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
+  python scripts/build_template.py --force-if-stale
 
 set +e
 "${COMPOSE[@]}" run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
