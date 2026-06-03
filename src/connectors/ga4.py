@@ -87,20 +87,51 @@ def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFram
             date_ranges=[DateRange(start_date=str(start), end_date=str(end))],
         ),
     )
+    # GA4 home « Visites mensuelles » — active users over time (all channels).
+    active_users_daily = _run_report(
+        api,
+        RunReportRequest(
+            property=property_path,
+            dimensions=[Dimension(name="date")],
+            metrics=[Metric(name="activeUsers")],
+            date_ranges=[DateRange(start_date=str(start), end_date=str(end))],
+        ),
+    )
 
     organic_summary = _fetch_organic_summary(
         api, property_path, start, end, organic_filter)
+    overview_summary = _fetch_property_overview(api, property_path, start, end)
     pages_daily, pages_top = _fetch_pages_screens(
         api, property_path, start, end)
 
     if daily.empty:
+        if active_users_daily.empty:
+            active_users_daily = pd.DataFrame(columns=["date", "activeUsers"])
+        else:
+            active_users_daily["date"] = pd.to_datetime(
+                active_users_daily["date"], format="%Y%m%d",
+            )
+            active_users_daily["activeUsers"] = pd.to_numeric(
+                active_users_daily["activeUsers"], errors="coerce",
+            ).fillna(0)
+        if countries.empty:
+            countries = pd.DataFrame(columns=["country", "activeUsers"])
+        else:
+            countries["activeUsers"] = pd.to_numeric(
+                countries["activeUsers"], errors="coerce",
+            ).fillna(0)
+            countries = countries.sort_values("activeUsers", ascending=False)
         return {
             "daily": daily,
             "organic_daily": daily,
+            "active_users_daily": active_users_daily,
             "channels": daily,
             "organic_summary": organic_summary,
+            "overview_summary": overview_summary,
             "pages_daily": pages_daily,
             "pages_top": pages_top,
+            "countries": countries,
+            "channel_daily": pd.DataFrame(),
         }
 
     daily["date"] = pd.to_datetime(daily["date"], format="%Y%m%d")
@@ -125,13 +156,25 @@ def fetch(client: ClientConfig, start: date, end: date) -> dict[str, pd.DataFram
                                                   errors="coerce").fillna(0)
         countries = countries.sort_values("activeUsers", ascending=False)
 
+    if active_users_daily.empty:
+        active_users_daily = pd.DataFrame(columns=["date", "activeUsers"])
+    else:
+        active_users_daily["date"] = pd.to_datetime(
+            active_users_daily["date"], format="%Y%m%d",
+        )
+        active_users_daily["activeUsers"] = pd.to_numeric(
+            active_users_daily["activeUsers"], errors="coerce",
+        ).fillna(0)
+
     return {
         "daily": daily,
         "organic_daily": organic,
+        "active_users_daily": active_users_daily,
         "channels": channels,
         "channel_daily": channel_daily,
         "countries": countries,
         "organic_summary": organic_summary,
+        "overview_summary": overview_summary,
         "pages_daily": pages_daily,
         "pages_top": pages_top,
     }
@@ -214,6 +257,41 @@ def _organic_channel_filter(channel_name: str):
             ),
         )
     )
+
+
+def _fetch_property_overview(api, property_path: str, start: date,
+                              end: date) -> dict[str, float]:
+    """GA4 « Vue d'ensemble » totals (all channels)."""
+    from google.analytics.data_v1beta.types import (DateRange, Metric,
+                                                      RunReportRequest)
+
+    metric_names = (
+        "activeUsers",
+        "newUsers",
+        "userEngagementDuration",
+        "averageSessionDuration",
+    )
+    request = RunReportRequest(
+        property=property_path,
+        metrics=[Metric(name=name) for name in metric_names],
+        date_ranges=[DateRange(start_date=str(start), end_date=str(end))],
+    )
+    frame = _run_report(api, request)
+    if frame.empty:
+        return {}
+    summary: dict[str, float] = {}
+    for name in metric_names:
+        if name not in frame.columns:
+            continue
+        summary[name] = float(pd.to_numeric(frame[name].iloc[0],
+                                             errors="coerce") or 0)
+    au = summary.get("activeUsers", 0)
+    engagement_total = summary.get("userEngagementDuration", 0)
+    if au > 0 and engagement_total > 0:
+        summary["avgEngagementSeconds"] = engagement_total / au
+    elif summary.get("averageSessionDuration"):
+        summary["avgEngagementSeconds"] = summary["averageSessionDuration"]
+    return summary
 
 
 def _fetch_organic_summary(api, property_path: str, start: date, end: date,

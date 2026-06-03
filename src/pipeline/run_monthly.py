@@ -9,7 +9,7 @@ The orchestrator:
 1. Loads the client configuration.
 2. Pulls data from every configured connector for the current and the
    previous month.
-3. Captures Google Business Profile (Playwright) and Microsoft Clarity UI data.
+3. Captures GA4, Google Business Profile (Playwright), and Microsoft Clarity UI data.
 4. Computes KPIs with month-over-month deltas.
 5. Generates rule-based insights and chart images.
 6. Fills the PowerPoint template and exports a PDF when possible.
@@ -29,6 +29,7 @@ import json
 import logging
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -39,6 +40,7 @@ import pandas as pd
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
                           get_client, gmb_ui_session_owner, gmb_ui_session_path,
+                          resolve_google_chrome_profile,
                           load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
@@ -231,12 +233,32 @@ def _build_report_data(client: ClientConfig, period: Period,
         if val and (not gmb_ui_kpis.get(key)
                     or str(gmb_ui_kpis.get(key)).strip().lower() == "n/a"):
             gmb_ui_kpis[key] = val
+    ga4_ui = _load_ga4_ui(output_dir)
+    ga4_ui_charts = _resolve_ga4_ui_charts(output_dir, ga4_ui)
+    if (
+        _ga4_ui_screenshots_required(client)
+        and not (ga4_ui_charts.get("visites") and ga4_ui_charts.get("country"))
+    ):
+        profile = _ga4_ui_profile_dir(client)
+        logger.warning(
+            "[%s] live GA4 dashboard capture unavailable for %s — top charts "
+            "will use GA4 Data API metrics (not manual PNGs). For real GA4 UI "
+            "widgets, log in once: python scripts/ga4_ui_prepare.py --client %s "
+            "(profile: %s)",
+            client.id, period.label, client.id, profile,
+        )
     chart_paths = {
         "chart_ga4_traffic": str(charts.ga4_traffic_overview(
-            current.get("ga4", {}).get("organic_daily", pd.DataFrame()),
+            current.get("ga4", {}).get("active_users_daily", pd.DataFrame()),
             current.get("ga4", {}).get("countries", pd.DataFrame()),
             current.get("ga4", {}).get("channel_daily", pd.DataFrame()),
-            chart_dir)),
+            chart_dir,
+            current_overview=current.get("ga4", {}).get("overview_summary") or {},
+            period_start=period.start,
+            period_end=period.end,
+            visits_image=ga4_ui_charts.get("visites"),
+            country_image=ga4_ui_charts.get("country"),
+        )),
         "chart_ga4_pages_screens": str(charts.ga4_pages_screens(
             current.get("ga4", {}).get("pages_daily", pd.DataFrame()),
             chart_dir)),
@@ -295,11 +317,11 @@ def _build_report_data(client: ClientConfig, period: Period,
         "organic_perf_engagement": organic_slide.kpis[3][1],
         "table_organic_performance": organic_slide,
         "table_top_pages": pages_table,
-        "gmb_commentary": _gmb_commentary(
+        "gmb_commentary": insights._polish_client_report_text(_gmb_commentary(
             current.get("gmb", {}).get("daily", pd.DataFrame()),
             gmb_ui=gmb_ui,
             kpi_strings=gmb_ui_kpis,
-        ),
+        )),
         "gmb_interactions": gmb_ui_kpis.get("overview", "n/a"),
         "gmb_calls": gmb_ui_kpis.get("calls", "n/a"),
         "gmb_bookings": gmb_ui_kpis.get("bookings", "n/a"),
@@ -314,7 +336,8 @@ def _build_report_data(client: ClientConfig, period: Period,
         "clarity_sessions": clarity["sessions"],
         "clarity_rage_clicks": clarity["rage_clicks"],
         "clarity_scroll_depth": clarity["scroll_depth"],
-        "clarity_commentary": clarity["commentary"],
+        "clarity_commentary": insights._polish_client_report_text(
+            clarity["commentary"]),
         "clarity_pages_per_session": clarity.get("pages_per_session", "n/a"),
         "clarity_active_time": clarity.get("active_time", "n/a"),
         "chart_clarity_overview": clarity_charts.get("overview", ""),
@@ -375,9 +398,10 @@ def _summarize_clarity(df: pd.DataFrame) -> dict[str, str]:
         "scroll_depth": (f"{scroll_value:.1f}%" if scroll_depth is not None
                          else "n/a"),
         "commentary": (
-            f"Clarity enregistre {sessions_value:,.0f} sessions{bot_note}, "
-            f"{rage_value:,.0f} clics de rage et une profondeur de scroll "
-            f"moyenne de {scroll_value:.1f}%."),
+            f"Clarity analyse {sessions_value:,.0f} sessions sur votre site "
+            f"avec une profondeur de lecture moyenne de {scroll_value:.1f} % — "
+            "un indicateur encourageant pour affiner l'expérience utilisateur."
+        ),
     }
 
 
@@ -402,6 +426,12 @@ def _load_clarity_ui(output_dir: Path) -> dict[str, Any] | None:
 _CLARITY_UI_EXTRACT_SCRIPT = (PROJECT_ROOT / "scripts"
                                 / "clarity_ui_extract.js")
 _CLARITY_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
+_GA4_UI_CAPTURE_VERSION = 2
+_TRUSTED_GA4_UI_SOURCES = frozenset({"playwright", "puppeteer"})
+_GA4_UI_CAPTURE_SCRIPT = PROJECT_ROOT / "scripts" / "ga4_ui_capture.py"
+_GA4_UI_EXTRACT_SCRIPT = PROJECT_ROOT / "scripts" / "ga4_ui_extract.js"
+_GA4_UI_SESSIONS_DIR = PROJECT_ROOT / "outputs" / "_sessions"
+_RUNTIME_REFRESH_GA4 = False
 _CLARITY_WIDGET_CARDS_DEFAULT = (
     "referrers",
     "devices",
@@ -550,6 +580,375 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             "manually in the browser.",
             period,
         )
+
+
+def _set_runtime_refresh_ga4(enabled: bool) -> None:
+    global _RUNTIME_REFRESH_GA4
+    _RUNTIME_REFRESH_GA4 = enabled
+
+
+def _ga4_reuse_captures() -> bool:
+    """When true, skip browser capture if PNGs already match this report month."""
+    return (env("SEO_REPORT_GA4_REUSE_CAPTURES") or "").lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _ga4_allow_static_fallback() -> bool:
+    return (env("SEO_REPORT_GA4_ALLOW_STATIC_FALLBACK") or "").lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _ga4_ui_profile_dir(client: ClientConfig) -> Path:
+    """Chrome profile for GA4 (prefers client's GMB profile when logged in)."""
+    resolved = resolve_google_chrome_profile(client, _GMB_UI_SESSIONS_DIR)
+    if resolved:
+        return resolved
+    return _GA4_UI_SESSIONS_DIR / f"chrome-profile-ga4-{client.id}"
+
+
+def _ga4_ui_session_candidates(client: ClientConfig) -> list[Path]:
+    """Session JSON files to try for Puppeteer GA4 capture (incl. GMB cookies)."""
+    paths: list[Path] = []
+    account = (client.google_oauth_account or "").strip().lower()
+    if account:
+        paths.append(_GA4_UI_SESSIONS_DIR / f"ga4-{account}.json")
+    paths.append(_GA4_UI_SESSIONS_DIR / "ga4.json")
+    paths.append(_GA4_UI_SESSIONS_DIR / f"ga4-{client.id}.json")
+    paths.append(gmb_ui_session_path(client, _GMB_UI_SESSIONS_DIR))
+    seen: set[str] = set()
+    found: list[Path] = []
+    for path in paths:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if path.is_file():
+            found.append(path)
+    return found
+
+
+def _ga4_ui_session_path(client: ClientConfig) -> Path:
+    """Shared GA4 browser session per Google account (agency vs client-specific)."""
+    account = (client.google_oauth_account or "").strip().lower()
+    if account:
+        return _GA4_UI_SESSIONS_DIR / f"ga4-{account}.json"
+    return _GA4_UI_SESSIONS_DIR / "ga4.json"
+
+
+def _ga4_property_id(client: ClientConfig) -> str | None:
+    from src.connectors.ga4 import _ga4_property_id_override
+
+    property_id = (client.ga4 or {}).get("property_id")
+    override = _ga4_property_id_override(client.id)
+    if override:
+        property_id = override
+    pid = str(property_id or "").strip()
+    return pid if pid.isdigit() else None
+
+
+_GA4_UI_FILE_MAP = {
+    "visites": "ga4_card_visites_mensuelles.png",
+    "country": "ga4_card_identifiant_pays.png",
+}
+
+
+def _ga4_ui_top_row_ready(output_dir: Path) -> bool:
+    """Both GA4 home cards captured separately (never a single wide PNG)."""
+    visites = output_dir / _GA4_UI_FILE_MAP["visites"]
+    country = output_dir / _GA4_UI_FILE_MAP["country"]
+    return (
+        visites.is_file() and visites.stat().st_size >= 800
+        and country.is_file() and country.stat().st_size >= 800
+    )
+
+
+def _ga4_ui_source_dirs(client: ClientConfig) -> list[Path]:
+    dirs: list[Path] = []
+    raw = (client.ga4 or {}).get("ui_charts_dir")
+    if raw:
+        base = Path(str(raw))
+        dirs.append(base if base.is_absolute() else PROJECT_ROOT / base)
+    client_dir = PROJECT_ROOT / "scripts" / "clients" / client.id / "ga4_assets"
+    if client_dir not in dirs:
+        dirs.append(client_dir)
+    return dirs
+
+
+def _write_ga4_ui_json(output_dir: Path, period: Period, client: ClientConfig,
+                        *, source: str) -> None:
+    charts: dict[str, str] = {}
+    for key, filename in _GA4_UI_FILE_MAP.items():
+        path = output_dir / filename
+        if path.is_file():
+            charts[key] = str(path.resolve())
+    if not charts:
+        return
+    payload = {
+        "capture_version": _GA4_UI_CAPTURE_VERSION,
+        "captured_at": datetime.now().isoformat(),
+        "report_month": period.label,
+        "period_start": period.start.isoformat(),
+        "period_end": period.end.isoformat(),
+        "property_id": _ga4_property_id(client),
+        "source": source,
+        "charts": charts,
+    }
+    (output_dir / "ga4_ui.json").write_text(
+        json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _ga4_ui_payload_trusted(ui_payload: dict[str, Any] | None) -> bool:
+    """Only accept PNGs produced by a live browser capture for this report."""
+    if not ui_payload:
+        return False
+    if ui_payload.get("capture_version") != _GA4_UI_CAPTURE_VERSION:
+        return False
+    source = str(ui_payload.get("source") or "").strip().lower()
+    return source in _TRUSTED_GA4_UI_SOURCES
+
+
+def _purge_untrusted_ga4_ui_assets(output_dir: Path) -> None:
+    """Drop manual/legacy GA4 images (never use user-provided screenshots)."""
+    payload = _load_ga4_ui(output_dir)
+    if _ga4_ui_payload_trusted(payload):
+        return
+    removed = False
+    for name in (*_GA4_UI_FILE_MAP.values(), "ga4_traffic_top.png"):
+        path = output_dir / name
+        if path.is_file():
+            path.unlink()
+            removed = True
+            logger.warning("[ga4-ui] removed untrusted image %s", name)
+    json_path = output_dir / "ga4_ui.json"
+    if json_path.is_file():
+        json_path.unlink()
+        removed = True
+    if removed:
+        logger.warning(
+            "[ga4-ui] discarded manual/legacy GA4 screenshots — only live "
+            "platform capture or API charts are used",
+        )
+
+
+def _stage_ga4_ui_charts(client: ClientConfig, output_dir: Path,
+                         period: Period) -> bool:
+    """Copy GA4 dashboard PNGs from client assets into the monthly output folder."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if _ga4_ui_top_row_ready(output_dir):
+        return True
+
+    copied = False
+    for src_dir in _ga4_ui_source_dirs(client):
+        if not src_dir.is_dir():
+            continue
+        for key, filename in _GA4_UI_FILE_MAP.items():
+            dest = output_dir / filename
+            if dest.is_file() and dest.stat().st_size >= 800:
+                continue
+            src = src_dir / filename
+            if src.is_file():
+                shutil.copy2(src, dest)
+                copied = True
+                logger.info("[ga4-ui] staged %s from %s", filename, src)
+
+    if _ga4_ui_top_row_ready(output_dir):
+        _write_ga4_ui_json(output_dir, period, client, source="client_assets")
+        return True
+    return False
+
+
+def _ga4_ui_screenshots_required(client: ClientConfig) -> bool:
+    if (client.ga4 or {}).get("use_ui_screenshots") is False:
+        return False
+    return _ga4_property_id(client) is not None
+
+
+def _ga4_capture_complete(output_dir: Path, period: Period) -> bool:
+    """True when monthly GA4 card PNGs match this reporting period."""
+    if not _ga4_ui_top_row_ready(output_dir):
+        return False
+    payload = _load_ga4_ui(output_dir)
+    if not _ga4_ui_payload_trusted(payload):
+        return False
+    if payload.get("report_month") and payload.get("report_month") != period.label:
+        return False
+    return (
+        payload.get("period_start") == period.start.isoformat()
+        and payload.get("period_end") == period.end.isoformat()
+    )
+
+
+def _capture_ga4_ui_playwright(client: ClientConfig, period: Period,
+                               *, show: bool = False) -> bool:
+    """Playwright + persistent Chrome profile (preferred, runs every report)."""
+    if not _GA4_UI_CAPTURE_SCRIPT.exists():
+        logger.warning("[ga4-ui] missing %s", _GA4_UI_CAPTURE_SCRIPT)
+        return False
+    profile = _ga4_ui_profile_dir(client)
+    if not profile.is_dir():
+        logger.info(
+            "[ga4-ui] no Chrome profile at %s (will try session JSON fallback)",
+            profile,
+        )
+        return False
+
+    logger.info("[ga4-ui] Chrome profile: %s", profile)
+    cmd = [
+        sys.executable,
+        str(_GA4_UI_CAPTURE_SCRIPT),
+        "--client", client.id,
+        "--month", period.label,
+        "--profile-dir", str(profile),
+    ]
+    if show or _RUNTIME_REFRESH_GA4:
+        cmd.append("--show")
+
+    logger.info("[ga4-ui] Playwright capture %s %s → %s",
+                client.id, period.label, client.output_dir / period.label)
+    try:
+        result = subprocess.run(
+            cmd, timeout=300, check=False, capture_output=True, text=True,
+        )
+        if result.stdout:
+            logger.info("[ga4-ui] stdout:\n%s", result.stdout[-2500:])
+        if result.stderr:
+            logger.info("[ga4-ui] stderr:\n%s", result.stderr[-2500:])
+    except (FileNotFoundError, subprocess.SubprocessError) as exc:
+        logger.warning("[ga4-ui] Playwright capture failed: %s", exc)
+        return False
+
+    if result.returncode != 0:
+        logger.warning("[ga4-ui] Playwright capture exit code %d",
+                       result.returncode)
+        return False
+    return _ga4_ui_top_row_ready(client.output_dir / period.label)
+
+
+def _capture_ga4_ui_session_json(client: ClientConfig, output_dir: Path,
+                                period: Period, *, show: bool = False) -> bool:
+    """Fallback: Puppeteer + ga4.json session cookies."""
+    property_id = _ga4_property_id(client)
+    if not property_id:
+        return False
+
+    session_paths = _ga4_ui_session_candidates(client)
+    if not session_paths:
+        logger.info("[ga4-ui] no session JSON (ga4.json or gmb-*.json)")
+        return False
+    if not _GA4_UI_EXTRACT_SCRIPT.exists():
+        return False
+
+    node_bin = shutil.which("node")
+    if not node_bin:
+        return False
+
+    profile = _ga4_ui_profile_dir(client)
+    json_out = output_dir / "ga4_ui.json"
+    for session_path in session_paths:
+        cmd = [
+            node_bin,
+            str(_GA4_UI_EXTRACT_SCRIPT),
+            "--session", str(session_path),
+            "--out", str(json_out),
+            "--property-id", property_id,
+            "--period-start", period.start.isoformat(),
+            "--period-end", period.end.isoformat(),
+            "--report-month", period.label,
+        ]
+        if profile.is_dir():
+            cmd.extend(["--profile", str(profile)])
+        if show or _RUNTIME_REFRESH_GA4:
+            cmd.append("--show")
+
+        logger.info(
+            "[ga4-ui] session-json capture %s → %s (session=%s)",
+            client.id, output_dir, session_path.name,
+        )
+        try:
+            result = subprocess.run(
+                cmd, timeout=300, check=False, capture_output=True, text=True,
+            )
+            if result.stdout:
+                logger.info("[ga4-ui] stdout:\n%s", result.stdout[-2000:])
+            if result.stderr:
+                logger.info("[ga4-ui] stderr:\n%s", result.stderr[-2000:])
+        except (FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.warning("[ga4-ui] session capture failed: %s", exc)
+            continue
+
+        if result.returncode == 0 and _ga4_ui_top_row_ready(output_dir):
+            return True
+    return False
+
+
+def _ensure_ga4_ui_charts(client: ClientConfig, output_dir: Path,
+                          period: Period) -> None:
+    """Refresh real GA4 UI screenshots on every report run (correct date range)."""
+    if "ga4" in _RUNTIME_SKIP or "ga4" in _ui_capture_disabled(client):
+        return
+    if not _ga4_ui_screenshots_required(client):
+        return
+
+    _purge_untrusted_ga4_ui_assets(output_dir)
+
+    if _ga4_reuse_captures() and _ga4_capture_complete(output_dir, period):
+        logger.info(
+            "[ga4-ui] reusing captures for %s (%s)",
+            client.id, period.label,
+        )
+        return
+
+    show = _RUNTIME_REFRESH_GA4
+    ok = _capture_ga4_ui_playwright(client, period, show=show)
+    if not ok:
+        ok = _capture_ga4_ui_session_json(client, output_dir, period, show=show)
+
+    if not ok and _ga4_allow_static_fallback():
+        logger.warning("[ga4-ui] browser capture failed — trying static assets")
+        ok = _stage_ga4_ui_charts(client, output_dir, period)
+
+
+def _load_ga4_ui(output_dir: Path) -> dict[str, Any] | None:
+    """Load ``ga4_ui.json`` if present (optional GA4 dashboard screenshots)."""
+    candidate = output_dir / "ga4_ui.json"
+    if not candidate.exists():
+        return None
+    try:
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("[ga4-ui] invalid JSON: %s", candidate)
+        return None
+
+
+def _resolve_ga4_ui_charts(output_dir: Path,
+                            ui_payload: dict[str, Any] | None) -> dict[str, str]:
+    """Live GA4 platform screenshots only (never manual/legacy PNGs)."""
+    if not _ga4_ui_payload_trusted(ui_payload):
+        return {}
+    out: dict[str, str] = {}
+    charts = (ui_payload or {}).get("charts") or {}
+    aliases = {
+        "visites": ("visites", "visites_mensuelles", "ga4_card_visites_mensuelles"),
+        "country": ("country", "identifiant_pays", "ga4_card_identifiant_pays"),
+    }
+
+    def _store(key: str, raw_path: str | Path) -> None:
+        if not raw_path or key in out:
+            return
+        candidate = Path(str(raw_path))
+        if not candidate.is_absolute():
+            candidate = (Path.cwd() / candidate).resolve()
+        if candidate.is_file():
+            out[key] = str(candidate)
+
+    for key, names in aliases.items():
+        for name in names:
+            raw = charts.get(name)
+            if raw:
+                _store(key, raw)
+    return out
 
 
 def _resolve_clarity_ui_charts(ui_payload: dict[str, Any] | None,
@@ -1244,6 +1643,7 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info("[%s] fetching data for %s", client.id, period.label)
+    _ensure_ga4_ui_charts(client, output_dir, period)
     _capture_clarity_ui(
         client, output_dir, period, refresh=_RUNTIME_REFRESH_CLARITY,
     )
@@ -1321,8 +1721,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-open Clarity in the browser to export widget PNGs "
              "(default: reuse clarity_card_*.png already in the output folder).",
     )
+    parser.add_argument(
+        "--refresh-ga4",
+        action="store_true",
+        help="Re-capture GA4 home cards in the browser (default: reuse only "
+             "trusted live captures for this month).",
+    )
     args = parser.parse_args(argv)
     _set_runtime_refresh_clarity(bool(args.refresh_clarity))
+    _set_runtime_refresh_ga4(bool(args.refresh_ga4))
 
     logging.basicConfig(level=logging.INFO,
                           format="%(asctime)s %(levelname)s %(name)s - %(message)s")

@@ -84,7 +84,7 @@ _FR_MONTHS = [
 def _report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
     """First/last day of the report calendar month (GBP picker is month-based).
 
-    For report ``2026-04`` with cycle 26/03→26/04, GBP still uses **avril 2026**
+    For report ``2026-04`` with cycle 25/03→25/04, GBP still uses **avril 2026**
     only, not a mars→avr range in the month selector.
     """
     if not period_end or len(period_end) < 7:
@@ -1644,7 +1644,7 @@ def select_reporting_period(target: Page | Frame, period_start: str,
         start, end = _default_period()
         return select_reporting_period(target, start, end, auto_previous=True)
 
-    # Cycle window (e.g. 26 mars → 26 avr) spans two calendar months in the
+    # Cycle window (e.g. 25 mars → 25 avr) spans two calendar months in the
     # picker labels; GBP only supports whole months — use report month (M).
     cal_start, cal_end = _report_calendar_month_bounds(period_end or period_start)
     start_label = _fr_month_year(cal_start)
@@ -1654,7 +1654,7 @@ def select_reporting_period(target: Page | Frame, period_start: str,
         win_end = _fr_month_year(period_end)
         if win_start and win_end and win_start != win_end:
             _log(
-                f"date range: 26→26 window is {win_start} → {win_end}; "
+                f"date range: cycle window is {win_start} → {win_end}; "
                 f"GBP picker uses {end_label or win_end} only.",
             )
     return select_date_range(target, cal_start, cal_end)
@@ -2439,7 +2439,7 @@ def main() -> int:
             except Exception as exc:
                 _log(f"modal: debug screenshot failed: {exc}")
 
-        # 4) Date range — calendar month of the report (not 26→26 in the picker).
+        # 4) Date range — calendar month of the report (not 25→25 in the picker).
         if dashboard_frame is not None:
             cal_start, cal_end = _report_calendar_month_bounds(
                 period_end or period_start,

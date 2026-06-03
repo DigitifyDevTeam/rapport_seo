@@ -30,12 +30,15 @@ def normalize_ga4(payload: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         organic = organic.reindex(columns=GA4_DAILY_COLUMNS, fill_value=0)
     pages_daily = payload.get("pages_daily", pd.DataFrame())
     pages_top = payload.get("pages_top", pd.DataFrame())
+    active_users_daily = payload.get("active_users_daily", pd.DataFrame())
     return {
         "organic_daily": organic,
+        "active_users_daily": active_users_daily,
         "channels": channels,
         "channel_daily": channel_daily,
         "countries": countries,
         "organic_summary": payload.get("organic_summary") or {},
+        "overview_summary": payload.get("overview_summary") or {},
         "pages_daily": pages_daily,
         "pages_top": pages_top,
     }

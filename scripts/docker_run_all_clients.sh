@@ -9,7 +9,7 @@
 #   ./scripts/docker_run_all_clients.sh --month 2026-04
 #
 # Auto month uses Period.for_scheduled_run() (same as monthly_job): on or after
-# SEO_REPORT_SCHEDULE_DAY / REPORT_CYCLE_DAY (default 26) → current calendar month;
+# SEO_REPORT_SCHEDULE_DAY / REPORT_CYCLE_DAY (default 25) → current calendar month;
 # before that day → previous calendar month.
 #
 # Per client: ./scripts/docker_run_client.sh <id> <month>, then Drive upload under

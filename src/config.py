@@ -175,3 +175,42 @@ def gmb_ui_session_owner(client: ClientConfig) -> str:
     if name.startswith("gmb-"):
         return name[4:]
     return client.id
+
+
+def resolve_google_chrome_profile(
+    client: ClientConfig,
+    sessions_dir: Path | None = None,
+) -> Path | None:
+    """First existing Chrome user-data dir for Google UI (GA4, GMB, etc.)."""
+    base = sessions_dir or (OUTPUTS_DIR / "_sessions")
+    ga4_cfg = client.ga4 or {}
+    gmb_cfg = client.gmb or {}
+    seen: set[str] = set()
+    names: list[str] = []
+
+    def add_name(name: str) -> None:
+        n = name.strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+
+    add_name(client.id)
+    add_name(str(ga4_cfg.get("ui_session_client") or ""))
+    add_name(str(gmb_cfg.get("ui_session_client") or ""))
+    account = (client.google_oauth_account or "").strip()
+    if account:
+        add_name(account)
+        add_name(account.lower())
+
+    candidates: list[Path] = []
+    for name in names:
+        candidates.append(base / f"chrome-profile-gmb-{name}")
+    if account:
+        candidates.append(base / f"chrome-profile-ga4-{account.lower()}")
+    candidates.append(base / f"chrome-profile-ga4-{client.id}")
+    candidates.append(base / "chrome-profile-gmb")
+
+    for path in candidates:
+        if path.is_dir():
+            return path
+    return None

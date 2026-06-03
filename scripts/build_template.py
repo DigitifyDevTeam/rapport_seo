@@ -84,8 +84,8 @@ TOC_ITEMS: list[tuple[str, int]] = [
     ("Top pages (GSC)", 9),
     ("Présence Google Business Profile", 10),
     ("Interactions clients (détail)", 11),
-    ("Synthèse finale", 12),
-    ("Merci pour votre attention", 13),
+    ("Backlinks", 12),
+    ("Synthèse finale", 14),
 ]
 
 FONT_TITLE = "Segoe UI"
@@ -580,6 +580,17 @@ def _add_summary_highlight(slide, left, top, width, height, title: str,
                   f"{{{{{placeholder}}}}}", size=12, color=body_rgb)
 
 
+def build_backlinks_slide(prs: Presentation, *, part: int = 1) -> None:
+    """Empty Backlinks slide — content added manually in PowerPoint."""
+    subtitle = "À compléter" if part == 1 else "À compléter (suite)"
+    slide = _slide_with_title(prs, "Backlinks", subtitle)
+    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide, prs)
+    inner_left, inner_top, inner_w, inner_h = _inner_rect(
+        panel_left, panel_top, panel_w, panel_h)
+    _add_soft_panel(slide, inner_left, inner_top, inner_w, inner_h,
+                    fill=RGBColor(0xFF, 0xFF, 0xFF), line=CARD_BORDER)
+
+
 def build_final_summary_slide(prs: Presentation) -> None:
     """Synthèse finale — brief banner + 4 topic cards."""
     slide = _slide_with_title(prs, "Synthèse finale",
@@ -1052,8 +1063,9 @@ def main() -> None:
                        "table_top_pages")
     build_gmb_overview(prs)
     build_gmb_details(prs)
+    build_backlinks_slide(prs, part=1)
+    build_backlinks_slide(prs, part=2)
     build_final_summary_slide(prs)
-    build_thank_you_slide(prs)
 
     prs.save(TEMPLATE_PATH)
     print(f"Template generated at {TEMPLATE_PATH}")

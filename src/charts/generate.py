@@ -7,6 +7,7 @@ the PowerPoint template.
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import matplotlib
@@ -18,6 +19,7 @@ import pandas as pd
 
 PRIMARY = "#0F172A"
 ACCENT = "#14B8A6"
+GA4_BLUE = "#1A73E8"
 WARN = "#E53935"
 GRID = "#E0E5EC"
 LEGEND_LOC = "upper left"
@@ -42,14 +44,15 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
-# Matches the GA4 traffic chart placeholder (~8.4" x 5.2" on the slide).
-_GA4_OVERVIEW_FIGSIZE = (10.0, 6.0)
+# Larger composite for readable KPIs + country table on the slide.
+_GA4_OVERVIEW_FIGSIZE = (12.5, 7.0)
+_GA4_OVERVIEW_DPI = 160
 
 
 def _save(fig, output: Path, *, pad: float = 0.06) -> Path:
     fig.savefig(
         output,
-        dpi=150,
+        dpi=_GA4_OVERVIEW_DPI,
         facecolor="white",
         bbox_inches="tight",
         pad_inches=pad,
@@ -90,9 +93,11 @@ def _placeholder(output: Path, message: str) -> Path:
 def ga4_traffic(df: pd.DataFrame, output_dir: Path) -> Path:
     output = _ensure_dir(output_dir) / "ga4_traffic.png"
     fig = plt.figure(figsize=_GA4_OVERVIEW_FIGSIZE)
-    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.15],
-                          hspace=0.48, wspace=0.32,
-                          left=0.07, right=0.98, top=0.94, bottom=0.08)
+    gs = fig.add_gridspec(
+        2, 2, height_ratios=[1.2, 1.0],
+        hspace=0.55, wspace=0.42,
+        left=0.06, right=0.99, top=0.96, bottom=0.07,
+    )
     ax_visits = fig.add_subplot(gs[0, 0])
     ax_country = fig.add_subplot(gs[0, 1])
     ax_channels = fig.add_subplot(gs[1, :])
@@ -102,19 +107,56 @@ def ga4_traffic(df: pd.DataFrame, output_dir: Path) -> Path:
     return _save(fig, output)
 
 
-def ga4_traffic_overview(organic_df: pd.DataFrame, countries_df: pd.DataFrame,
-                         channel_daily_df: pd.DataFrame, output_dir: Path) -> Path:
+def ga4_traffic_overview(
+    active_users_daily: pd.DataFrame,
+    countries_df: pd.DataFrame,
+    channel_daily_df: pd.DataFrame,
+    output_dir: Path,
+    *,
+    current_overview: dict[str, float] | None = None,
+    period_start: date | None = None,
+    period_end: date | None = None,
+    visits_image: Path | str | None = None,
+    country_image: Path | str | None = None,
+) -> Path:
+    """Build the GA4 traffic slide image.
+
+    Top row: « Vue d'ensemble » (25/M→25/M+1, one line) and « Utilisateurs actifs
+    par Pays » (country table from GA4 Data API).
+    Bottom: sessions by channel.
+    """
     output = _ensure_dir(output_dir) / "ga4_traffic.png"
+    visits = _resolve_existing_path(visits_image)
+    country = _resolve_existing_path(country_image)
+
     fig = plt.figure(figsize=_GA4_OVERVIEW_FIGSIZE)
-    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1.15],
-                          hspace=0.48, wspace=0.32,
-                          left=0.07, right=0.98, top=0.94, bottom=0.08)
+    gs = fig.add_gridspec(
+        2, 2, height_ratios=[1.2, 1.0],
+        hspace=0.55, wspace=0.42,
+        left=0.06, right=0.99, top=0.96, bottom=0.07,
+    )
+    ax_channels = fig.add_subplot(gs[1, :])
     ax_visits = fig.add_subplot(gs[0, 0])
     ax_country = fig.add_subplot(gs[0, 1])
-    ax_channels = fig.add_subplot(gs[1, :])
 
-    _draw_visits(ax_visits, organic_df)
-    _draw_country(ax_country, countries_df)
+    if visits is not None:
+        _draw_ga4_screenshot(ax_visits, visits)
+    else:
+        if period_start is None or period_end is None:
+            raise ValueError("period_start and period_end required for Vue d'ensemble")
+        _draw_vue_ensemble(
+            ax_visits,
+            active_users_daily,
+            current_overview or {},
+            period_start=period_start,
+            period_end=period_end,
+        )
+
+    if country is not None:
+        _draw_ga4_screenshot(ax_country, country)
+    else:
+        _draw_identifiant_pays(ax_country, countries_df)
+
     _draw_channels(ax_channels, channel_daily_df)
     return _save(fig, output)
 
@@ -196,34 +238,89 @@ def gmb_actions(df: pd.DataFrame, output_dir: Path) -> Path:
     return _save(fig, output)
 
 
-def _draw_visits(ax, df: pd.DataFrame) -> None:
-    ax.set_title("Visites mensuelles", fontsize=11, pad=6)
-    if df.empty:
+def _resolve_existing_path(path: Path | str | None) -> Path | None:
+    if not path:
+        return None
+    candidate = Path(path)
+    return candidate if candidate.is_file() else None
+
+
+def _draw_ga4_screenshot(ax, path: Path) -> None:
+    """Embed a GA4 UI card screenshot (titles are already in the image)."""
+    import matplotlib.image as mpimg
+
+    ax.imshow(mpimg.imread(path))
+    ax.set_axis_off()
+
+
+def _draw_vue_ensemble(
+    ax,
+    current_daily: pd.DataFrame,
+    current_overview: dict[str, float],
+    *,
+    period_start: date,
+    period_end: date,
+) -> None:
+    from src.charts.ga4_vue_ensemble import draw_vue_ensemble
+
+    draw_vue_ensemble(
+        ax,
+        current_daily,
+        current_overview,
+        period_start=period_start,
+        period_end=period_end,
+    )
+
+
+def _draw_visites_mensuelles(ax, df: pd.DataFrame) -> None:
+    """GA4 home card: active users over time (metric ``activeUsers``, dim ``date``)."""
+    ax.set_title("Visites mensuelles", fontsize=12, fontweight="bold", pad=8)
+    if df.empty or "activeUsers" not in df.columns:
         ax.text(0.5, 0.5, "Données indisponibles", ha="center", va="center",
                 transform=ax.transAxes, color="#555B6E")
         ax.set_axis_off()
         return
     plot_df = df.sort_values("date").copy()
     plot_df["date"] = pd.to_datetime(plot_df["date"])
-    ax.plot(plot_df["date"], plot_df["sessions"], color=PRIMARY,
-            label="Sessions", linewidth=2.0)
-    ax.plot(plot_df["date"], plot_df["users"], color=ACCENT,
-            label="Utilisateurs", linewidth=1.8, linestyle="--")
+    ax.plot(
+        plot_df["date"], plot_df["activeUsers"],
+        color=GA4_BLUE, linewidth=2.2, label="Utilisateurs actifs",
+    )
+    ax.set_ylabel("Utilisateurs actifs", fontsize=9)
     _format_date_axis(ax, plot_df["date"], max_ticks=6, rotation=35)
     ax.grid(True, axis="y", linewidth=0.6)
     ax.legend(frameon=False, fontsize=8, loc=LEGEND_LOC)
     ax.margins(x=0.02)
 
 
-def _draw_country(ax, countries_df: pd.DataFrame) -> None:
-    ax.set_title("Identifiant du pays")
+def _draw_identifiant_pays(ax, countries_df: pd.DataFrame) -> None:
+    """GA4 home card: active users by country (map + Pays / Utilisateurs table)."""
+    from src.charts.ga4_country_widget import draw_utilisateurs_actifs_par_pays
+
     if countries_df.empty or "country" not in countries_df.columns:
         _draw_country_placeholder(ax)
         return
-    top = countries_df.head(6).iloc[::-1]
-    ax.barh(top["country"], top["activeUsers"], color=ACCENT)
-    ax.grid(True, axis="x", linewidth=0.6)
-    ax.tick_params(axis="y", labelsize=8)
+    draw_utilisateurs_actifs_par_pays(ax, countries_df)
+
+
+def _draw_visits(ax, df: pd.DataFrame) -> None:
+    """Legacy helper — maps organic daily to active-users style when needed."""
+    if "activeUsers" in df.columns:
+        _draw_visites_mensuelles(ax, df)
+        return
+    if df.empty or "sessions" not in df.columns:
+        _draw_visites_mensuelles(ax, pd.DataFrame())
+        return
+    mapped = df.sort_values("date").copy()
+    mapped["date"] = pd.to_datetime(mapped["date"])
+    mapped["activeUsers"] = pd.to_numeric(
+        mapped.get("users", mapped["sessions"]), errors="coerce",
+    ).fillna(0)
+    _draw_visites_mensuelles(ax, mapped[["date", "activeUsers"]])
+
+
+def _draw_country(ax, countries_df: pd.DataFrame) -> None:
+    _draw_identifiant_pays(ax, countries_df)
 
 
 def _draw_channels(ax, channel_daily_df: pd.DataFrame) -> None:

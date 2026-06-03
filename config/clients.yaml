@@ -30,6 +30,7 @@ clients:
     ga4:
       property_id: "339322990"
       organic_channel: "Organic Search"
+      ui_charts_dir: scripts/clients/cchabitat/ga4_assets
     gsc:
       site_url: "https://www.cc-habitat.com/"
     gmb:
@@ -60,6 +61,7 @@ clients:
     ga4:
       property_id: "366533803"
       organic_channel: "Organic Search"
+      ui_charts_dir: scripts/clients/digitify/ga4_assets
     gsc:
       site_url: "https://digitify.fr/"
     gmb:
@@ -94,6 +96,7 @@ clients:
     ga4:
       property_id: "402338514"
       organic_channel: "Organic Search"
+      ui_charts_dir: scripts/clients/deepcleaning/ga4_assets
     gsc:
       site_url: "https://deepcleaning.fr/"
     gmb:
@@ -127,15 +130,15 @@ clients:
       seo_pack: Pack PRO +
       seo_since: Janvier 2021
     ga4:
-      property_id: "REMPLACER_ID_PROPRIETE_GA4"
+      property_id: "357892867"
       organic_channel: "Organic Search"
+      # Top traffic cards use GA4 Data API (activeUsers) — same metrics as GA4 home.
+      use_ui_screenshots: false
     gsc:
       site_url: "https://originecbd.fr/"
     gmb:
       account_id: ""
       location_id: ""
-      # Same Google account as DeepCleaning — reuse its VPS session (#mpd= URL).
-      ui_session_client: deepcleaning
       ui_prefer_gmb_app: true
       ui_project_name: "Origin"
       # Fallback Google Search query if GBP list does not open Performance.
@@ -160,6 +163,7 @@ clients:
     ga4:
       property_id: "000000000"
       organic_channel: "Organic Search"
+      use_ui_screenshots: false
     gsc:
       site_url: "sc-domain:example.com"
     gmb:

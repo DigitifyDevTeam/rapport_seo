@@ -4,6 +4,7 @@ PyYAML>=6.0
 python-dotenv>=1.0
 requests>=2.32
 matplotlib>=3.8
+geopandas>=0.14
 Pillow>=10.0
 pytesseract>=0.3.10
 python-pptx>=1.0

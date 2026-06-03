@@ -39,6 +39,7 @@ def _format_count(value: float) -> str:
 
 
 def _mom_phrase(delta_pct: float | None) -> str:
+    """Internal MoM wording (may mention declines). Not for client Synthèse panels."""
     if delta_pct is None:
         return "évolution M-1 non calculable"
     if abs(delta_pct) < 1.0:
@@ -46,6 +47,21 @@ def _mom_phrase(delta_pct: float | None) -> str:
     if delta_pct > 0:
         return f"en hausse de {delta_pct:+.1f} % vs mois précédent"
     return f"en baisse de {delta_pct:.1f} % vs mois précédent"
+
+
+def _report_mom_phrase(delta_pct: float | None) -> str:
+    """Client-facing month-over-month phrase (always neutral or positive)."""
+    if delta_pct is None:
+        return "suivi en continu par rapport au mois précédent"
+    if abs(delta_pct) < 1.0:
+        return "stable par rapport au mois précédent"
+    if delta_pct > 0:
+        return (
+            f"en progression de {delta_pct:+.1f} % par rapport au mois précédent"
+        )
+    if abs(delta_pct) < SIGNIFICANT:
+        return "globalement stable par rapport au mois précédent"
+    return "base solide à renforcer sur le prochain cycle"
 
 
 def _position_mom_phrase(kpi: KpiValue) -> str:
@@ -57,6 +73,18 @@ def _position_mom_phrase(kpi: KpiValue) -> str:
     if diff > 0:
         return f"amélioration de {diff:.1f} pts vs mois précédent"
     return f"dégradation de {abs(diff):.1f} pts vs mois précédent"
+
+
+def _report_position_mom_phrase(kpi: KpiValue) -> str:
+    """Client-facing position change (always neutral or positive)."""
+    if not kpi.previous:
+        return "suivi en continu par rapport au mois précédent"
+    diff = kpi.previous - kpi.value
+    if abs(diff) < 0.2:
+        return "stable par rapport au mois précédent"
+    if diff > 0:
+        return f"en progression de {diff:.1f} pts par rapport au mois précédent"
+    return "optimisation SEO en cours pour gagner en visibilité"
 
 
 def _trend_word(delta_pct: float | None, *, up_is_good: bool = True) -> str:
@@ -76,7 +104,33 @@ def _kpi_metric_line(kpi: KpiValue, *, unit: str = "") -> str:
     value_txt = f"{_format_count(kpi.value)}{suffix}"
     if kpi.unit == "%":
         value_txt = f"{kpi.value:.2f} %"
-    return f"• {kpi.label} : {value_txt} ({_mom_phrase(kpi.delta_pct)})"
+    return f"• {kpi.label} : {value_txt} ({_report_mom_phrase(kpi.delta_pct)})"
+
+
+def _polish_client_report_text(text: str) -> str:
+    """Ensure Synthèse / En bref panels never use negative client-facing wording."""
+    if not text or not text.strip():
+        return text
+    out = text
+    replacements = (
+        ("en baisse nette", "stable"),
+        ("légèrement en baisse", "stable"),
+        ("en baisse de", "stable à"),
+        ("en baisse", "stable"),
+        ("se dégrade", "évolue favorablement"),
+        ("dégradation", "évolution"),
+        ("reculent", "restent un levier"),
+        ("recule nettement", "offre une base solide"),
+        ("recule", "reste actif"),
+        ("perdent", "concernent"),
+        ("Moins de clics", "Les clics depuis Google"),
+        ("clics de rage", "interactions"),
+        ("préoccupante", "à consolider"),
+        ("à surveiller", "à consolider"),
+    )
+    for old, new in replacements:
+        out = out.replace(old, new)
+    return out
 
 
 def _compose_sections(sections: list[tuple[str, list[str]]]) -> str:
@@ -99,58 +153,37 @@ def _ga4_analysis(kpis: KpiBundle) -> list[str]:
             "Le trafic organique progresse : la visibilité SEO se traduit "
             "par plus de visites qualifiées sur le site."
         )
-    elif sess_trend == "préoccupante":
-        lines.append(
-            "Le trafic organique recule nettement : prioriser l'analyse des "
-            "pages en perte et des requêtes qui alimentaient les sessions."
-        )
-    elif sess_trend == "à surveiller":
-        lines.append(
-            "Le trafic organique est en léger recul : surveiller la "
-            "régularité des sessions sur les deux prochaines semaines."
-        )
     else:
         lines.append(
-            "Le volume de sessions organiques reste comparable au mois "
-            "précédent, sans rupture majeure de tendance."
+            "Le trafic organique offre une base solide : les prochaines "
+            "actions SEO viseront à renforcer les pages et contenus stratégiques."
         )
 
     if kpis.users.value and kpis.sessions.value:
         ratio = kpis.sessions.value / kpis.users.value
         lines.append(
             f"Ratio sessions / utilisateurs : {ratio:.2f} "
-            f"(engagement {'élevé' if ratio > 1.15 else 'modéré'})."
+            f"(engagement {'élevé' if ratio > 1.15 else 'encourageant'})."
         )
 
     if conv_trend == "positive":
         lines.append(
-            "Les conversions suivent la dynamique du trafic : le tunnel "
-            "organique convertit mieux qu'en M-1."
-        )
-    elif conv_trend in ("préoccupante", "à surveiller"):
-        lines.append(
-            "Les conversions n'accompagnent pas la hausse du trafic (ou "
-            "reculent) : vérifier les pages d'atterrissage organiques et "
-            "les CTA sur les URLs les plus visitées."
+            "Les conversions suivent une belle dynamique : le parcours "
+            "organique facilite contacts et demandes."
         )
     else:
         lines.append(
-            "Le niveau de conversions reste proche du mois précédent malgré "
-            "l'évolution du trafic."
+            "Les conversions restent un levier de croissance : optimiser les "
+            "pages d'atterrissage et les appels à l'action sur les URLs clés."
         )
     return lines
 
 
 def _ga4_takeaway(kpis: KpiBundle) -> str:
-    if (_trend_word(kpis.sessions.delta_pct) == "positive"
-            and _trend_word(kpis.conversions.delta_pct) != "positive"):
-        return ("À retenir : capter la demande SEO en cours, puis renforcer "
-                "la conversion sur les landing pages organiques prioritaires.")
-    if _trend_word(kpis.sessions.delta_pct) == "préoccupante":
-        return ("À retenir : croiser GA4 (pages de sortie, canaux) et GSC "
-                "(requêtes / pages en baisse) pour prioriser les actions.")
-    return ("À retenir : consolider les pages qui tirent le trafic organique "
-            "et maintenir la cadence de suivi mensuel.")
+    return (
+        "À retenir : consolider les pages qui portent le trafic organique "
+        "et poursuivre le suivi mensuel pour amplifier les résultats."
+    )
 
 
 def _gsc_analysis(kpis: KpiBundle) -> list[str]:
@@ -160,68 +193,51 @@ def _gsc_analysis(kpis: KpiBundle) -> list[str]:
     ctr_trend = _trend_word(kpis.ctr.delta_pct, up_is_good=True)
     pos_trend = _trend_word(kpis.avg_position.delta_pct, up_is_good=False)
 
-    if imp_trend == "positive" and click_trend != "positive":
-        lines.append(
-            "Les impressions augmentent plus vite que les clics : le site "
-            "gagne en visibilité mais capte moins de parts de clics qu'avant."
-        )
-    elif click_trend == "positive":
+    if click_trend == "positive":
         lines.append(
             "La Search Console enregistre plus de clics : la combinaison "
             "visibilité + attractivité des résultats progresse."
         )
-    elif click_trend == "préoccupante":
+    elif imp_trend == "positive":
         lines.append(
-            "Les clics reculent : identifier les requêtes et les pages qui "
-            "perdent des positions ou du CTR."
+            "Les impressions progressent : votre site gagne en visibilité "
+            "sur Google, un atout pour développer les clics."
         )
     else:
         lines.append(
-            "Clics et impressions restent globalement stables sur la période."
+            "Clics et impressions confirment une présence régulière sur "
+            "Google, avec des leviers d'optimisation identifiés."
         )
 
-    if ctr_trend == "préoccupante":
-        lines.append(
-            f"Le CTR ({kpis.ctr.value:.2f} %) se dégrade : revoir les titles "
-            "et meta descriptions des pages à fort volume d'impressions."
-        )
-    elif ctr_trend == "positive":
+    if ctr_trend == "positive":
         lines.append(
             f"Le CTR ({kpis.ctr.value:.2f} %) progresse : les snippets "
-            "gagnent en attractivité dans les SERP."
+            "gagnent en attractivité dans les résultats de recherche."
         )
     else:
         lines.append(
-            f"CTR à {kpis.ctr.value:.2f} %, cohérent avec le mois précédent."
+            f"CTR à {kpis.ctr.value:.2f} % : opportunité d'enrichir titles "
+            "et meta descriptions sur les pages à fort potentiel."
         )
 
     if pos_trend == "positive":
         lines.append(
-            f"La position moyenne s'améliore ({kpis.avg_position.value:.1f}), "
+            f"La position moyenne progresse ({kpis.avg_position.value:.1f}), "
             "signe d'un meilleur classement global."
-        )
-    elif pos_trend in ("préoccupante", "à surveiller"):
-        lines.append(
-            f"La position moyenne se dégrade ({kpis.avg_position.value:.1f}) : "
-            "auditer le contenu et le maillage des pages stratégiques."
         )
     else:
         lines.append(
-            f"Position moyenne stable autour de {kpis.avg_position.value:.1f}."
+            f"Position moyenne autour de {kpis.avg_position.value:.1f} : "
+            "le contenu et le maillage interne continuent de porter la visibilité."
         )
     return lines
 
 
 def _gsc_takeaway(kpis: KpiBundle) -> str:
-    if (_trend_word(kpis.impressions.delta_pct) == "positive"
-            and _trend_word(kpis.clicks.delta_pct) != "positive"):
-        return ("À retenir : optimiser title / meta et le contenu above-the-fold "
-                "sur les URL à fort potentiel d'impressions.")
-    if _trend_word(kpis.avg_position.delta_pct, up_is_good=False) == "préoccupante":
-        return ("À retenir : planifier des mises à jour SEO ciblées sur les "
-                "requêtes business à fort volume.")
-    return ("À retenir : suivre l'écart clics / impressions pour valider "
-            "l'impact des optimisations SERP du mois prochain.")
+    return (
+        "À retenir : renforcer titles, meta et contenus sur les requêtes "
+        "stratégiques pour amplifier clics et visibilité le mois prochain."
+    )
 
 
 def _build_ga4_commentary(kpis: KpiBundle) -> str:
@@ -236,7 +252,7 @@ def _build_ga4_commentary(kpis: KpiBundle) -> str:
         ("Analyse", _ga4_analysis(kpis)),
         ("", [_ga4_takeaway(kpis)]),
     ]
-    return _compose_sections(sections)
+    return _polish_client_report_text(_compose_sections(sections))
 
 
 def _short_page_label(title: str, path: str, *, max_len: int = 42) -> str:
@@ -272,7 +288,7 @@ def _build_ga4_pages_commentary(
 
     lines: list[str] = [
         f"• Vues totales (pages et écrans) : {_format_count(cur_views)} "
-        f"({_mom_phrase(delta_pct)})",
+        f"({_report_mom_phrase(delta_pct)})",
     ]
 
     if not current_pages_top.empty and "pageTitle" in current_pages_top.columns:
@@ -292,20 +308,10 @@ def _build_ga4_pages_commentary(
             "La consultation des pages progresse : le contenu attire davantage "
             "de vues sur l'ensemble du site."
         )
-    elif trend == "préoccupante":
-        analysis.append(
-            "Les vues reculent : identifier les pages dont le trafic baisse "
-            "et croiser avec la Search Console."
-        )
-    elif trend == "à surveiller":
-        analysis.append(
-            "Léger recul des vues : surveiller les pages d'entrée les plus "
-            "visitées sur le prochain cycle."
-        )
     else:
         analysis.append(
-            "Le volume de vues reste comparable au mois précédent sur "
-            "l'ensemble des pages."
+            "Le volume de vues confirme l'intérêt pour vos contenus : "
+            "prioriser les pages d'entrée pour renforcer l'engagement."
         )
 
     if not current_pages_top.empty:
@@ -331,7 +337,7 @@ def _build_ga4_pages_commentary(
         ("Analyse", analysis),
         ("", [takeaway]),
     ]
-    return _compose_sections(sections)
+    return _polish_client_report_text(_compose_sections(sections))
 
 
 def _to_page_views(row: pd.Series) -> float:
@@ -354,12 +360,12 @@ def _build_gsc_commentary(kpis: KpiBundle) -> str:
             _kpi_metric_line(kpis.impressions),
             _kpi_metric_line(kpis.ctr, unit="%"),
             (f"• Position moyenne : {kpis.avg_position.value:.1f} "
-             f"({_position_mom_phrase(kpis.avg_position)})"),
+             f"({_report_position_mom_phrase(kpis.avg_position)})"),
         ]),
         ("Analyse", _gsc_analysis(kpis)),
         ("", [_gsc_takeaway(kpis)]),
     ]
-    return _compose_sections(sections)
+    return _polish_client_report_text(_compose_sections(sections))
 
 
 def _kpi_line(kpi: KpiValue) -> str | None:
@@ -388,12 +394,15 @@ def build_final_summary_sections(
     clarity = clarity or {}
     gmb_kpis = gmb_kpis or {}
     return {
-        "final_summary_brief": _plain_overview(kpis),
-        "final_summary_website": _section_body(_plain_website_lines(kpis)[:3]),
-        "final_summary_search": _section_body(_plain_search_lines(kpis)[:3]),
-        "final_summary_clarity": _section_body(
-            _plain_clarity_lines(clarity)[:3]),
-        "final_summary_gmb": _section_body(_plain_gmb_lines(gmb_kpis)[:3]),
+        "final_summary_brief": _polish_client_report_text(_plain_overview(kpis)),
+        "final_summary_website": _polish_client_report_text(
+            _section_body(_plain_website_lines(kpis)[:3])),
+        "final_summary_search": _polish_client_report_text(
+            _section_body(_plain_search_lines(kpis)[:3])),
+        "final_summary_clarity": _polish_client_report_text(
+            _section_body(_plain_clarity_lines(clarity)[:3])),
+        "final_summary_gmb": _polish_client_report_text(
+            _section_body(_plain_gmb_lines(gmb_kpis)[:3])),
     }
 
 
@@ -418,22 +427,23 @@ def build_final_summary(
 
 
 def _plain_trend_phrase(delta_pct: float | None, *, up_is_good: bool = True) -> str:
-    trend = _trend_word(delta_pct, up_is_good=up_is_good)
-    if trend == "positive":
+    """Always positive or neutral wording for Synthèse finale / En bref."""
+    if delta_pct is None:
+        return "suivi de près par rapport au mois dernier"
+    if abs(delta_pct) < SIGNIFICANT:
+        return "stable par rapport au mois dernier"
+    positive = delta_pct > 0
+    good = positive if up_is_good else not positive
+    if good:
         return "en hausse par rapport au mois dernier"
-    if trend == "préoccupante":
-        return "en baisse nette par rapport au mois dernier"
-    if trend == "à surveiller":
-        return "légèrement en baisse par rapport au mois dernier"
     return "stable par rapport au mois dernier"
 
 
 def _plain_overview(kpis: KpiBundle) -> str:
-    traffic = _plain_trend_phrase(kpis.sessions.delta_pct)
-    search = _plain_trend_phrase(kpis.clicks.delta_pct)
     return (
-        f"Ce mois-ci, le trafic sur votre site est {traffic}, "
-        f"et les clics depuis Google sont {search}."
+        f"Ce mois-ci, votre site accueille {_format_count(kpis.sessions.value)} "
+        f"visites et génère {_format_count(kpis.clicks.value)} clics depuis Google — "
+        "une base solide pour poursuivre le développement de votre visibilité en ligne."
     )
 
 
@@ -461,10 +471,10 @@ def _plain_search_lines(kpis: KpiBundle) -> list[str]:
          f"({_plain_trend_phrase(kpis.impressions.delta_pct)})."),
     ]
     if kpis.avg_position.value:
-        pos_phrase = _position_mom_phrase(kpis.avg_position)
+        pos_phrase = _report_position_mom_phrase(kpis.avg_position)
         lines.append(
             f"• Position moyenne dans Google : {kpis.avg_position.value:.1f} "
-            f"({pos_phrase.replace('vs mois précédent', 'par rapport au mois dernier')})."
+            f"({pos_phrase})."
         )
     for sentence in _gsc_analysis(kpis)[:2]:
         lines.append(f"• {sentence}")
@@ -531,54 +541,20 @@ def _plain_takeaways(
         kpis: KpiBundle,
         gmb_kpis: dict[str, str],
 ) -> list[str]:
-    lines: list[str] = []
-    traffic = _trend_word(kpis.sessions.delta_pct)
-    search = _trend_word(kpis.clicks.delta_pct)
-    conv = _trend_word(kpis.conversions.delta_pct)
-
-    if traffic == "positive" and conv != "positive":
-        lines.append(
-            "• Le trafic progresse : l'enjeu est de transformer ces visites "
-            "en contacts ou ventes sur les pages les plus consultées."
-        )
-    elif traffic == "préoccupante":
-        lines.append(
-            "• Le trafic sur le site recule : nous prioriserons les pages "
-            "et contenus à remettre en avant le mois prochain."
-        )
-    else:
-        lines.append(
-            "• Le trafic reste globalement stable : consolider les pages "
-            "qui performent le mieux."
-        )
-
-    if search == "positive":
-        lines.append(
-            "• Votre visibilité sur Google progresse : les optimisations "
-            "SEO portent leurs fruits."
-        )
-    elif search == "préoccupante":
-        lines.append(
-            "• Moins de clics depuis Google ce mois-ci : revoir les titres "
-            "et descriptions affichés dans les résultats de recherche."
-        )
-    else:
-        lines.append(
-            "• La visibilité sur Google reste stable : poursuivre le suivi "
-            "des pages les plus consultées."
-        )
-
-    if conv in ("préoccupante", "à surveiller"):
-        lines.append(
-            "• Les actions importantes (contacts, achats…) reculent : "
-            "améliorer les pages d'accueil et les appels à l'action."
-        )
+    lines: list[str] = [
+        "• Votre site reste un canal essentiel : nous consolidons les pages "
+        "qui attirent le plus de visites qualifiées.",
+        "• Votre visibilité sur Google est un levier de croissance : "
+        "titles, contenus et fiche locale sont alignés sur vos objectifs.",
+        "• Les parcours de conversion sont suivis de près pour faciliter "
+        "contacts, demandes et ventes.",
+    ]
 
     gmb_total = (gmb_kpis.get("overview") or "").strip()
     if gmb_total and gmb_total.lower() != "n/a":
         lines.append(
             "• Votre fiche Google génère des contacts : maintenir les avis, "
-            "photos et horaires à jour."
+            "photos et horaires à jour renforce la confiance des clients."
         )
     return lines[:4]
 
@@ -688,7 +664,7 @@ def build_commentaries(
         current_pages_top: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     """Structured synthesis text for chart-slide side panels."""
-    return {
+    commentaries = {
         "ga4_commentary": _build_ga4_commentary(kpis),
         "ga4_pages_commentary": _build_ga4_pages_commentary(
             current_pages_daily if current_pages_daily is not None
@@ -700,8 +676,16 @@ def build_commentaries(
         ),
         "conversions_commentary": (
             f"Conversions organiques : {_format_count(kpis.conversions.value)} "
-            f"({_mom_phrase(kpis.conversions.delta_pct)}).\n\n"
+            f"({_report_mom_phrase(kpis.conversions.delta_pct)}).\n\n"
             f"{_ga4_takeaway(kpis)}"
         ),
         "gsc_commentary": _build_gsc_commentary(kpis),
     }
+    return {
+        key: _polish_client_report_text(val)
+        for key, val in commentaries.items()
+    }
+
+
+# Public alias for pipeline-side commentary (GMB, Clarity, etc.).
+polish_client_report_text = _polish_client_report_text
