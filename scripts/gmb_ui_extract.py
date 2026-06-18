@@ -68,7 +68,11 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v4-public-fiche"
+GMB_UI_CAPTURE_VERSION = "calmonth-v5-hidpi-screenshots"
+
+# Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
+_BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
+_BROWSER_DEVICE_SCALE_FACTOR = 2
 
 DATE_PRESET_LABELS = [
     "Mois précédent", "Mois dernier", "Le mois dernier",
@@ -2102,10 +2106,10 @@ def _launch_browser_context(pw, args: argparse.Namespace,
         ignore_default_args=["--enable-automation"],
         args=_docker_browser_args(),
     )
-    viewport = {"width": 1600, "height": 900}
     # Use a real Chrome UA so Google does not flag the session as headless.
     ctx_common = dict(
-        viewport=viewport,
+        viewport=_BROWSER_VIEWPORT,
+        device_scale_factor=_BROWSER_DEVICE_SCALE_FACTOR,
         locale="fr-FR",
         user_agent=_REAL_CHROME_UA,
         timezone_id="Europe/Paris",

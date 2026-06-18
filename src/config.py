@@ -81,10 +81,22 @@ def load_clients(path: Path = CONFIG_PATH) -> list[ClientConfig]:
     return clients
 
 
+_CLIENT_ALIASES: dict[str, str] = {
+    # Common typo: domain is originecbd.fr but client id is origincbd.
+    "originecbd": "origincbd",
+}
+
+
+def resolve_client_id(client_id: str) -> str:
+    """Map common typos / alternate spellings to canonical client ids."""
+    return _CLIENT_ALIASES.get(client_id.strip().lower(), client_id)
+
+
 def get_client(client_id: str, path: Path = CONFIG_PATH) -> ClientConfig:
     """Return a single client by id."""
+    resolved = resolve_client_id(client_id)
     for client in load_clients(path):
-        if client.id == client_id:
+        if client.id == resolved:
             return client
     raise KeyError(f"Client '{client_id}' not found in {path}")
 

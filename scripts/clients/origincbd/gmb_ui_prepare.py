@@ -1,5 +1,12 @@
 """Origine CBD — save GMB session (Google Search → Performance → ENTER).
 
+Prefer the shared-account flow (same Google login as DeepCleaning)::
+
+    python scripts/gmb_ui_prepare_shared_account.py
+
+That saves cookies in ``gmb-deepcleaning.json`` and ``gmb-performance-origincbd.txt``.
+Only run this script if Origincbd uses a **separate** Google account.
+
 Usage::
 
     python scripts/clients/origincbd/gmb_ui_prepare.py

@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-utils \
     x11vnc \
     fluxbox \
+    xterm \
     novnc \
     websockify \
     && rm -rf /var/lib/apt/lists/*

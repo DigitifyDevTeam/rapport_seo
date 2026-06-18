@@ -28,6 +28,14 @@ const path = require("path");
 const readline = require("readline");
 const puppeteer = require("puppeteer");
 
+// Hi-DPI captures (2×) for readable charts in PowerPoint placeholders.
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v1";
+const BROWSER_VIEWPORT = {
+  width: 1920,
+  height: 1080,
+  deviceScaleFactor: 2,
+};
+
 /** Always store absolute paths in clarity_ui.json (Docker cwd = /app). */
 function chartPathAbsolute(filePath) {
   if (!filePath) return null;
@@ -1457,7 +1465,7 @@ async function main() {
   }
   const browser = await puppeteer.launch({
     headless: show || record ? false : "new",
-    defaultViewport: { width: 1600, height: 900 },
+    defaultViewport: BROWSER_VIEWPORT,
     args: browserArgs,
     ignoreDefaultArgs: ["--enable-automation"],
   });
@@ -1531,6 +1539,7 @@ async function main() {
 
   const payload = {
     captured_at: new Date().toISOString(),
+    capture_version: CLARITY_UI_CAPTURE_VERSION,
     url: targetUrl,
     period_start: periodStart || null,
     period_end: periodEnd || null,

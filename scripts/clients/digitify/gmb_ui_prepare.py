@@ -1,5 +1,12 @@
 """Digitify — save GMB session (Google Search → Performance → ENTER).
 
+Prefer the shared-account flow (same Google login as DeepCleaning)::
+
+    python scripts/gmb_ui_prepare_shared_account.py
+
+That saves cookies in ``gmb-deepcleaning.json`` and ``gmb-performance-digitify.txt``.
+Only run this script if you need a dedicated ``gmb-digitify.json``.
+
 Usage::
 
     python scripts/clients/digitify/gmb_ui_prepare.py

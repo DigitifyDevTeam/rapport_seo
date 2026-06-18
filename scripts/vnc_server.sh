@@ -37,6 +37,16 @@ _start_fluxbox() {
   sleep 0.3
 }
 
+_start_terminal() {
+  if pgrep -x xterm >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v xterm >/dev/null 2>&1; then
+    _log "starting xterm (right-click desktop also opens Fluxbox menu)"
+    xterm -geometry 100x30+40+40 >/tmp/xterm.log 2>&1 &
+  fi
+}
+
 _ensure_passfile() {
   mkdir -p /tmp/vnc
   PASSFILE=/tmp/vnc/passwd
@@ -93,6 +103,7 @@ PY
 
 _start_xvfb
 _start_fluxbox
+_start_terminal
 
 # Clean up any stray processes from previous starts.
 pkill -f "websockify.*0\\.0\\.0\\.0:7900" 2>/dev/null || true
@@ -124,3 +135,4 @@ while true; do
   fi
   sleep 1
 done
+

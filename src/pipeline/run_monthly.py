@@ -64,7 +64,10 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v4-public-fiche"
+GMB_UI_CAPTURE_VERSION = "calmonth-v5-hidpi-screenshots"
+
+# Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
+CLARITY_UI_CAPTURE_VERSION = "hidpi-v1"
 
 
 @dataclass
@@ -466,7 +469,9 @@ def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
     try:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return True
+        return False
+    if payload.get("capture_version") != CLARITY_UI_CAPTURE_VERSION:
+        return False
     return (
         payload.get("period_start") == period.start.isoformat()
         and payload.get("period_end") == period.end.isoformat()
