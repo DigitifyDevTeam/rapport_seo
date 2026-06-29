@@ -55,6 +55,22 @@ gmb_vnc_python() {
     python "$@"
 }
 
+# Dedicated Chrome profile (e.g. cchabitat.seo@gmail.com — not the agency account).
+gmb_vnc_python_profile() {
+  local profile="${1:?profile path required}"
+  shift
+  gmb_vnc_ensure
+  docker compose --profile tools exec -it \
+    -e DISPLAY="${GMB_VNC_DISPLAY}" \
+    -e PYTHONPATH=/app \
+    -e SEO_REPORT_VNC=1 \
+    -e SEO_REPORT_GMB_PROFILE="${profile}" \
+    -e DBUS_SESSION_BUS_ADDRESS=/dev/null \
+    -w /app \
+    seo-vnc \
+    python "$@"
+}
+
 # After VPS IP change: backup old cookies and start with a clean Chrome profile.
 gmb_vnc_reset_sessions() {
   cd "${GMB_VNC_ROOT}"

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # GMB prepare for one client on the VPS (noVNC). Opens Chrome in noVNC.
 #
+# Shared Google account (agency):
 #   bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning
+#   bash scripts/gmb_ui_prepare_vnc_client.sh origincbd
 #   bash scripts/gmb_ui_prepare_vnc_client.sh digitify
-#   bash scripts/gmb_ui_prepare_vnc_client.sh --fresh deepcleaning   # VPS IP changed
+#   bash scripts/gmb_ui_prepare_vnc_client.sh guivarche
 #
-# After VPS IP change, run --fresh once, then deepcleaning, then other clients.
+# Separate Google account:
+#   bash scripts/gmb_ui_prepare_vnc_client.sh cchabitat
+#
+# After VPS IP change:
+#   bash scripts/gmb_ui_prepare_vnc_client.sh --fresh deepcleaning
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/gmb_vnc_common.sh
@@ -29,12 +35,19 @@ for arg in "$@"; do
   esac
 done
 
-CLIENT="${CLIENT:?Usage: $0 [--fresh] <client_id>  e.g. deepcleaning, digitify}"
+CLIENT="${CLIENT:?Usage: $0 [--fresh] <client_id>}"
+
+# Common typos
+case "${CLIENT}" in
+  originecbd|origincbd) CLIENT="origincbd" ;;
+esac
 
 if [[ "${FRESH}" -eq 1 ]]; then
   gmb_vnc_reset_sessions
   echo ""
 fi
+
+CCHABITAT_PROFILE="/app/outputs/_sessions/chrome-profile-gmb-cchabitat"
 
 case "${CLIENT}" in
   deepcleaning)
@@ -47,12 +60,15 @@ case "${CLIENT}" in
     echo "Opening browser for ${CLIENT} Performance URL..."
     gmb_vnc_python scripts/capture_gmb_performance_url.py "${CLIENT}" --show
     ;;
+  cchabitat)
+    echo "CC Habitat — separate Google account (cchabitat.seo@gmail.com)"
+    echo "Uses profile: ${CCHABITAT_PROFILE}"
+    gmb_vnc_python_profile "${CCHABITAT_PROFILE}" \
+      scripts/clients/cchabitat/gmb_ui_prepare.py
+    ;;
   *)
     echo "Unknown client: ${CLIENT}" >&2
-    echo "Shared-account clients: deepcleaning, origincbd, digitify, guivarche" >&2
-    echo "For cchabitat (separate Google account):" >&2
-    echo "  bash scripts/gmb_vnc_shell.sh" >&2
-    echo "  python scripts/clients/cchabitat/gmb_ui_prepare.py" >&2
+    echo "Clients: deepcleaning, origincbd, digitify, guivarche, cchabitat" >&2
     exit 1
     ;;
 esac

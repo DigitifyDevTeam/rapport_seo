@@ -14,6 +14,7 @@ import argparse
 import os
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,17 +56,29 @@ def _profile_for_client(client_id: str) -> Path:
     return Path(gmb_profile_dir(sessions, fallback=fallback))
 
 
-def _wait_for_manual_performance(context, page: Page, project: str) -> Page | None:
+def _wait_for_manual_performance(
+    context,
+    page: Page,
+    project: str,
+    *,
+    via_search: bool = False,
+) -> Page | None:
     """Keep the browser open until the user signs in and opens Performance in noVNC."""
-    try:
-        if "accounts.google.com" not in (page.url or ""):
-            page.goto(GMB_LOCATIONS_URL, wait_until="domcontentloaded", timeout=60_000)
-    except Exception:
-        pass
+    if not via_search:
+        try:
+            if "accounts.google.com" not in (page.url or ""):
+                page.goto(GMB_LOCATIONS_URL, wait_until="domcontentloaded", timeout=60_000)
+        except Exception:
+            pass
     print("")
-    print("Auto-navigation stopped (sign-in required — normal after a VPS IP change).")
-    print("1) Sign in in the Chrome window in noVNC.")
-    print(f"2) Open Performances for {project!r} on business.google.com.")
+    if via_search:
+        print("Google Search opened (same flow as deepcleaning prepare).")
+        print("1) Sign in in noVNC if asked.")
+        print(f"2) Click « interactions avec les clients » for {project!r}.")
+    else:
+        print("Auto-navigation stopped (sign-in required — normal after a VPS IP change).")
+        print("1) Sign in in the Chrome window in noVNC.")
+        print(f"2) Open Performances for {project!r} on business.google.com.")
     print("3) Press ENTER here when the Performance page is visible.")
     print("")
     while True:
@@ -163,9 +176,21 @@ def main() -> int:
             page = context.new_page()
 
         print(f"Opening business.google.com for {project!r} …")
-        perf_page = _open_gmb_performance_direct(page, project, aliases)
-        if perf_page is None and args.show:
-            perf_page = _wait_for_manual_performance(context, page, project)
+        search_query = (gmb.get("ui_search_query") or "").strip()
+        if args.show and search_query:
+            start_url = (
+                "https://www.google.com/search?hl=fr&q="
+                + urllib.parse.quote_plus(search_query)
+            )
+            print(f"Opening Google Search for {project!r} …")
+            page.goto(start_url, wait_until="domcontentloaded", timeout=60_000)
+            perf_page = _wait_for_manual_performance(
+                context, page, project, via_search=True,
+            )
+        else:
+            perf_page = _open_gmb_performance_direct(page, project, aliases)
+            if perf_page is None and args.show:
+                perf_page = _wait_for_manual_performance(context, page, project)
         if perf_page is None:
             print("Could not open Performance.")
             if not args.show:

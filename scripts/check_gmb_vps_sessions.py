@@ -66,6 +66,11 @@ def _session_ready(client: ClientConfig, session_path: Path) -> tuple[bool, str]
         return False, f"invalid JSON: {exc}"
 
     if "#mpd=" in url or "promote/performance" in url:
+        if shared_owner and client_id != shared_owner and not perf_file.is_file():
+            return False, (
+                f"missing {perf_file.name} — run "
+                f"bash scripts/gmb_ui_prepare_vnc_client.sh {client_id}"
+            )
         return True, f"OK (#mpd= in {session_path.name})"
 
     if url.rstrip("/").endswith("business.google.com/locations"):
@@ -108,6 +113,9 @@ def main() -> int:
             "  outputs/_sessions/gmb-deepcleaning.json\n"
             "  outputs/_sessions/gmb-performance-origincbd.txt\n"
             "  outputs/_sessions/gmb-performance-digitify.txt\n"
+            "  outputs/_sessions/gmb-performance-guivarche.txt\n"
+            "\nCC Habitat (separate Google account):\n"
+            "  bash scripts/gmb_ui_prepare_vnc_client.sh cchabitat\n"
             "\nRemove stale gmb-origincbd.json / gmb-digitify.json if present "
             "(they block shared-session fallback).\n",
             file=sys.stderr,

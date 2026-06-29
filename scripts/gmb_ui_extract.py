@@ -479,6 +479,7 @@ def _try_select_project_label(page: Page, project_name: str) -> bool:
             loc = page.get_by_text(pattern).first
             href = loc.evaluate(
                 "el => (el.closest('a') && el.closest('a').href) || ''",
+                timeout=5_000,
             )
             if href and href.startswith("http") and "business.google.com" not in href:
                 continue
