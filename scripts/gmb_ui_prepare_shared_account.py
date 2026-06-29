@@ -88,7 +88,17 @@ def main() -> int:
     elif args.skip_master:
         master_json = SESSIONS / f"gmb-{MASTER_CLIENT}.json"
         if not master_json.is_file():
-            print(f"Missing {master_json} — run without --skip-master first.", file=sys.stderr)
+            print(f"Missing {master_json}", file=sys.stderr)
+            print(
+                "Shared-account clients (origincbd, digitify) need the master login first:",
+                file=sys.stderr,
+            )
+            print(
+                "  bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning",
+                file=sys.stderr,
+            )
+            print("Or full flow (all clients):", file=sys.stderr)
+            print("  bash scripts/gmb_ui_prepare_vnc.sh", file=sys.stderr)
             return 1
         print(f"Using existing {master_json.name}")
 

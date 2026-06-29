@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # GMB prepare for one client on the VPS (noVNC + shared Google account).
 #
-#   ./scripts/gmb_ui_prepare_vnc_client.sh origincbd
-#   ./scripts/gmb_ui_prepare_vnc_client.sh digitify
-#   ./scripts/gmb_ui_prepare_vnc_client.sh deepcleaning   # full login + Performance URL
+# Order matters for origincbd / digitify (same Google account as deepcleaning):
+#   1) bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning   # login once → gmb-deepcleaning.json
+#   2) bash scripts/gmb_ui_prepare_vnc_client.sh origincbd      # Performance URL only
+#   3) bash scripts/gmb_ui_prepare_vnc_client.sh digitify       # Performance URL only
 #
-# Requires gmb-deepcleaning.json for origincbd/digitify (same Google account).
-# Open http://<vps-ip>:7900/vnc.html  password: vnc
+# Equivalent (inside docker, same env as gmb_ui_prepare_vnc.sh):
+#   bash scripts/gmb_ui_prepare_vnc.sh --clients deepcleaning
+#   bash scripts/gmb_ui_prepare_vnc.sh --skip-master --clients digitify
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
