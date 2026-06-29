@@ -222,32 +222,54 @@ function normalizeLabel(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
-function exactLabelMatch(text, labels) {
+function labelMatches(text, labels) {
   const t = normalizeLabel(text).toLowerCase();
-  return labels.some((label) => t === normalizeLabel(label).toLowerCase());
+  if (!t || t.length > 80) return false;
+  return labels.some((label) => {
+    const l = normalizeLabel(label).toLowerCase();
+    return t === l || t.startsWith(l) || t.endsWith(l);
+  });
 }
 
 function extractKpisInBrowser(labels) {
   function normalize(text) {
     return (text || "").replace(/\s+/g, " ").trim();
   }
+  const numberRe =
+    /^-?[\d][\d\s\u00A0\u202F.,]*\s*(%|sec|min|s|m|h|k)?$/iu;
+
+  function pickNumber(texts) {
+    const numbers = texts.filter((t) => numberRe.test(t));
+    if (!numbers.length) return null;
+    numbers.sort((a, b) => b.replace(/\D/g, "").length - a.replace(/\D/g, "").length);
+    return numbers[0];
+  }
+
   function findClosestNumber(labelEl) {
+    const scopes = [labelEl];
     let parent = labelEl;
-    for (let depth = 0; depth < 6; depth += 1) {
+    for (let depth = 0; depth < 8; depth += 1) {
       if (!parent || !parent.parentElement) break;
       parent = parent.parentElement;
-      const candidates = Array.from(parent.querySelectorAll("*"))
+      scopes.push(parent);
+    }
+    for (const scope of scopes) {
+      const siblings = [
+        scope.nextElementSibling,
+        scope.previousElementSibling,
+      ].filter(Boolean);
+      for (const sib of siblings) {
+        const hit = pickNumber([normalize(sib.textContent)]);
+        if (hit) {
+          return { value: hit, cardText: normalize(scope.textContent).slice(0, 240) };
+        }
+      }
+      const candidates = Array.from(scope.querySelectorAll("*"))
         .map((n) => normalize(n.textContent))
-        .filter((t) => t && t.length <= 40);
-      const numbers = candidates.filter((t) =>
-        /^-?\d[\d\s\u00A0\u202F.,]*\s*(%|sec|min|s|m|h)?$/u.test(t),
-      );
-      if (numbers.length) {
-        numbers.sort((a, b) => b.length - a.length);
-        return {
-          value: numbers[0],
-          cardText: normalize(parent.textContent).slice(0, 240),
-        };
+        .filter((t) => t && t.length <= 48);
+      const hit = pickNumber(candidates);
+      if (hit) {
+        return { value: hit, cardText: normalize(scope.textContent).slice(0, 240) };
       }
     }
     return null;
@@ -258,12 +280,12 @@ function extractKpisInBrowser(labels) {
     let found = null;
     const allNodes = document.querySelectorAll("*");
     for (const el of allNodes) {
+      if (el.children && el.children.length > 6) continue;
       const text = normalize(el.textContent);
       if (!text) continue;
-      if (candidates.some((c) => text === c || text === c.trim())) {
-        found = findClosestNumber(el);
-        if (found) break;
-      }
+      if (!labelMatches(text, candidates)) continue;
+      found = findClosestNumber(el);
+      if (found) break;
     }
     result[key] = found;
   }
@@ -1528,10 +1550,17 @@ async function main() {
     }
     await page.goto(targetUrl, { waitUntil: "networkidle2" });
   }
-  // Give charts/cards time to render.
-  await new Promise((r) => setTimeout(r, 6000));
+  // Give charts/cards time to render (KPI strip often loads after widgets).
+  await new Promise((r) => setTimeout(r, 8000));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise((r) => setTimeout(r, 1500));
 
-  const kpis = await page.evaluate(extractKpisInBrowser, KPI_LABELS);
+  let kpis = await page.evaluate(extractKpisInBrowser, KPI_LABELS);
+  const missingKpis = Object.values(kpis).filter((v) => !v || !v.value).length;
+  if (missingKpis > 0) {
+    await new Promise((r) => setTimeout(r, 5000));
+    kpis = await page.evaluate(extractKpisInBrowser, KPI_LABELS);
+  }
 
   if (screenshot) {
     fs.mkdirSync(path.dirname(path.resolve(screenshot)), { recursive: true });

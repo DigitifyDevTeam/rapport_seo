@@ -227,6 +227,12 @@ def _parse_args() -> argparse.Namespace:
         default="",
         help="Client id (e.g. deepcleaning) — saves per-client Performance URL.",
     )
+    parser.add_argument(
+        "--fiche-match",
+        default="",
+        help="Comma-separated hints to pick the right listing on Google Search "
+             "(e.g. digitify.fr,street name).",
+    )
     return parser.parse_args()
 
 
@@ -378,6 +384,40 @@ def _log(msg: str) -> None:
             ),
             flush=True,
         )
+
+
+def _safe_write_text(path: Path, content: str) -> None:
+    """Write JSON/text even when a prior root-owned or read-only file exists."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        try:
+            path.chmod(path.stat().st_mode | 0o200)
+        except OSError:
+            pass
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise PermissionError(
+                f"Cannot replace {path} — run: "
+                "bash scripts/vps_fix_outputs_permissions.sh"
+            ) from exc
+    path.write_text(content, encoding="utf-8")
+
+
+def _fiche_match_hints(args: argparse.Namespace) -> list[str]:
+    hints: list[str] = []
+    raw = (getattr(args, "fiche_match", None) or "").strip()
+    if raw:
+        hints.extend(part.strip() for part in raw.split(",") if part.strip())
+    for candidate in (
+        args.location_name,
+        args.business_name,
+        args.project_name,
+    ):
+        text = (candidate or "").strip()
+        if text and text not in hints:
+            hints.append(text)
+    return hints
 
 
 def _safe_wait_idle(page: Page, timeout: int = 15_000) -> None:
@@ -650,11 +690,26 @@ def _screenshot_clip(page: Page, out_path: Path, clip: dict[str, float]) -> bool
         return False
 
 
+def _focus_listing_for_fiche(page: Page, fiche_match: list[str]) -> None:
+    if not fiche_match:
+        return
+    try:
+        clicked = page.evaluate(JS_FOCUS_LOCAL_LISTING, fiche_match)
+    except Exception as exc:
+        _log(f"public fiche: listing click failed: {exc}")
+        return
+    if clicked:
+        _log(f"public fiche: selected listing ({', '.join(fiche_match[:3])})")
+        time.sleep(3.0)
+        _safe_wait_idle(page, timeout=15_000)
+
+
 def screenshot_public_fiche(
     page: Page,
     out_path: Path,
     *,
     search_query: str = "",
+    fiche_match: list[str] | None = None,
 ) -> str | None:
     """Screenshot the public GBP fiche on Google Search (not the owner dashboard)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -663,6 +718,7 @@ def screenshot_public_fiche(
         if not _ensure_search_page_for_fiche(page, search_query):
             _log("public fiche: not on a clean Search page.")
             return None
+        _focus_listing_for_fiche(page, fiche_match or [])
         try:
             clip = page.evaluate(KNOWLEDGE_PANEL_CLIP_JS)
         except Exception as exc:
@@ -684,8 +740,10 @@ def screenshot_public_fiche(
         return None
 
     def _try_maps_page() -> str | None:
-        if not search_query or not open_maps_search(page, search_query):
+        maps_query = (fiche_match or [None])[0] or search_query
+        if not maps_query or not open_maps_search(page, maps_query):
             return None
+        _focus_listing_for_fiche(page, fiche_match or [])
         try:
             clip = page.evaluate(MAPS_PANEL_CLIP_JS)
         except Exception as exc:
@@ -874,9 +932,12 @@ def capture_public_fiche_then_restore_search(
     *,
     search_query: str = "",
     dash_url: str = "",
+    fiche_match: list[str] | None = None,
 ) -> str | None:
     """Save the public fiche PNG, then leave the browser on Google Search."""
-    shot = screenshot_public_fiche(page, out_path, search_query=search_query)
+    shot = screenshot_public_fiche(
+        page, out_path, search_query=search_query, fiche_match=fiche_match,
+    )
     _return_to_search_for_performance(
         page, search_query=search_query, dash_url=dash_url,
     )
@@ -1000,6 +1061,37 @@ JS_CLICK_BY_TEXT = "((pattern) => {\n" + _JS_HELPERS_BODY + r"""
   if (!candidates.length) return false;
   candidates.sort((a, b) => a.area - b.area || a.top - b.top);
   candidates[0].el.click();
+  return true;
+})
+"""
+
+
+JS_FOCUS_LOCAL_LISTING = "((hints) => {\n" + _JS_HELPERS_BODY + r"""
+  const needles = (hints || [])
+    .map((h) => String(h).toLowerCase())
+    .filter(Boolean);
+  if (!needles.length) return false;
+  let best = null;
+  let bestScore = -1;
+  for (const el of document.querySelectorAll(
+    'a, [role="button"], div[jsaction], span[jsaction]')) {
+    if (typeof el.click !== "function") continue;
+    const t = _gmbNormalize(el.textContent || el.innerText || '').toLowerCase();
+    if (!t || t.length > 220) continue;
+    const hits = needles.filter((n) => t.includes(n)).length;
+    if (!hits) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.left > window.innerWidth * 0.58) continue;
+    const score = hits * 1000 - rect.width * rect.height;
+    if (score > bestScore) {
+      best = el;
+      bestScore = score;
+    }
+  }
+  if (!best) return false;
+  best.scrollIntoView({ block: 'center', behavior: 'instant' });
+  best.click();
   return true;
 })
 """
@@ -2261,7 +2353,10 @@ def main() -> int:
                 url = tab_page.url or ""
                 if "google.com/search" in url and "sorry" not in url:
                     shot = screenshot_public_fiche(
-                        tab_page, business_card_out, search_query=search_query,
+                        tab_page,
+                        business_card_out,
+                        search_query=search_query,
+                        fiche_match=_fiche_match_hints(args),
                     )
                     if shot:
                         charts["business_card"] = shot
@@ -2332,7 +2427,7 @@ def main() -> int:
                         f"(wrong month or empty)",
                     )
             else:
-                out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+                _safe_write_text(out_path, json.dumps(payload, indent=2))
             print(f"Wrote {out_path}")
             for key, info in kpis.items():
                 value = info.get("value") if isinstance(info, dict) else None
@@ -2531,20 +2626,27 @@ def main() -> int:
                 pass
 
         # 6) Public fiche (after Performance KPIs — Maps must not block overlay).
+        fiche_hints = _fiche_match_hints(args)
         if not charts.get("business_card") and not args.no_search and search_query:
             card_page = page if _page_alive(page) else dashboard_page
             if card_page is not None:
+                if business_card_out.is_file() and not _validate_saved_public_fiche(
+                    business_card_out,
+                ):
+                    try:
+                        business_card_out.unlink()
+                    except OSError:
+                        pass
                 _log("post-capture: public fiche screenshot")
                 shot = capture_public_fiche_then_restore_search(
                     card_page,
                     business_card_out,
                     search_query=search_query,
                     dash_url=dash_url,
+                    fiche_match=fiche_hints,
                 )
                 if shot:
                     charts["business_card"] = shot
-                elif business_card_out.is_file():
-                    charts["business_card"] = str(business_card_out.resolve())
 
         if args.screenshot:
             full_path = Path(args.screenshot).resolve()
@@ -2621,7 +2723,7 @@ def main() -> int:
                     shutil.copy2(out_path, bak)
                 except OSError:
                     pass
-            out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            _safe_write_text(out_path, json.dumps(payload, indent=2))
             if client_id and final_url:
                 _save_client_performance_url(client_id, session_path, final_url)
             if kpis and final_url and "#mpd=" in final_url:

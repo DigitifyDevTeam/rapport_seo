@@ -24,4 +24,6 @@ else
   chown -R "${OWNER}" "${ROOT}/outputs" "${ROOT}/logs" 2>/dev/null || true
 fi
 
+chmod -R u+rwX "${ROOT}/outputs" "${ROOT}/logs" 2>/dev/null || true
+
 echo "Done."

@@ -12,12 +12,18 @@ from src.reporting.gmb_card_ocr import ocr_text_from_png
 
 logger = logging.getLogger(__name__)
 
-# Organic SERP snippet (wrong) vs full knowledge panel (correct).
+# Organic SERP snippet / local pack list (wrong) vs full knowledge panel (correct).
 _ORGANIC_MARKERS = (
     "fleurs cbd, huiles",
     "boutique cbd | cbd shop",
     "produits dédiés au cbd",
     "https://originecbd",
+)
+_LOCAL_PACK_MARKERS = (
+    "vous êtes arrivé à la fin de la liste",
+    "fin de la liste",
+    "résultats pour",
+    "plus de lieux",
 )
 _PANEL_MARKERS = (
     "avis google",
@@ -61,7 +67,14 @@ def is_valid_public_fiche_png(path: Path) -> bool:
         )
         return ok
     organic_hits = sum(1 for m in _ORGANIC_MARKERS if m in text)
+    pack_hits = sum(1 for m in _LOCAL_PACK_MARKERS if m in text)
     panel_hits = sum(1 for m in _PANEL_MARKERS if m in text)
+    if pack_hits >= 1:
+        logger.info(
+            "[gmb-card] %s: looks like local pack list (pack=%d)",
+            path.name, pack_hits,
+        )
+        return False
     if organic_hits >= 1 and panel_hits < 2:
         logger.info(
             "[gmb-card] %s: looks like organic snippet (organic=%d panel=%d)",
@@ -70,6 +83,13 @@ def is_valid_public_fiche_png(path: Path) -> bool:
         return False
     if panel_hits >= 2:
         return True
+    # Multiple "Site Web" / "Ouvert" lines usually means a results list, not one panel.
+    if text.count("site web") >= 2 or text.count("ouvert") >= 2:
+        logger.info(
+            "[gmb-card] %s: multiple listing action buttons — local pack",
+            path.name,
+        )
+        return False
     if "origine cbd" in text and ("paris" in text or "75004" in text):
         return panel_hits >= 1
     logger.info(

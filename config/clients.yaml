@@ -72,7 +72,10 @@ clients:
       ui_session_client: deepcleaning
       ui_prefer_gmb_app: true
       ui_project_name: "Digitify"
-      ui_search_query: "Digitify"
+      ui_search_query: "Digitify concepteur sites web digitify.fr Lyon"
+      ui_fiche_match:
+        - digitify.fr
+        - "Doyen Georges Chapas"
       ui_project_aliases:
         - "Digitify.fr"
         - "digitify.fr"

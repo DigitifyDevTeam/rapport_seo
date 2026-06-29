@@ -52,6 +52,7 @@ from src.periods import REPORTING_ANCHOR_DAY, Period
 from src.pipeline.delivery import send_report
 from src.reporting.ensure_template import ensure_report_template
 from src.reporting.export_pdf import export as export_pdf
+from src.reporting.clarity_kpi_ocr import merge_clarity_kpi_fallback
 from src.reporting.gmb_business_card import (
     ensure_valid_business_card,
     is_valid_public_fiche_png,
@@ -300,7 +301,7 @@ def _build_report_data(client: ClientConfig, period: Period,
     clarity_ui = _load_clarity_ui(output_dir)
     clarity_charts = _resolve_clarity_ui_charts(clarity_ui, output_dir)
     if clarity_ui is not None:
-        clarity = _merge_clarity_ui(clarity, clarity_ui)
+        clarity = _merge_clarity_ui(clarity, clarity_ui, output_dir)
 
     final_sections = insights.build_final_summary_sections(
         kpis,
@@ -457,6 +458,15 @@ def _clarity_required_card_ids(client: ClientConfig) -> tuple[str, ...]:
     return tuple(c for c in required if c not in skip)
 
 
+def _clarity_kpis_populated(ui_payload: dict[str, Any] | None) -> bool:
+    """True when at least sessions KPI was scraped into clarity_ui.json."""
+    kpis = (ui_payload or {}).get("kpis") or {}
+    entry = kpis.get("sessions")
+    if isinstance(entry, dict) and str(entry.get("value") or "").strip():
+        return True
+    return False
+
+
 def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
                                period: Period) -> bool:
     """True when widget PNGs and ``clarity_ui.json`` match this report period."""
@@ -473,10 +483,18 @@ def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
         return False
     if payload.get("capture_version") != CLARITY_UI_CAPTURE_VERSION:
         return False
-    return (
-        payload.get("period_start") == period.start.isoformat()
-        and payload.get("period_end") == period.end.isoformat()
-    )
+    if (
+        payload.get("period_start") != period.start.isoformat()
+        or payload.get("period_end") != period.end.isoformat()
+    ):
+        return False
+    if not _clarity_kpis_populated(payload):
+        logger.info(
+            "[clarity-ui] KPI strip missing in %s — will re-capture",
+            json_path,
+        )
+        return False
+    return True
 
 
 def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
@@ -1006,7 +1024,8 @@ def _resolve_clarity_ui_charts(ui_payload: dict[str, Any] | None,
 
 
 def _merge_clarity_ui(api_summary: dict[str, str],
-                       ui_payload: dict[str, Any]) -> dict[str, str]:
+                       ui_payload: dict[str, Any],
+                       output_dir: Path | None = None) -> dict[str, str]:
     kpis = (ui_payload or {}).get("kpis") or {}
 
     def value(key: str) -> str | None:
@@ -1022,6 +1041,15 @@ def _merge_clarity_ui(api_summary: dict[str, str],
     pages_per_session = value("pages_per_session")
     scroll_depth = value("scroll_depth")
     active_time = value("active_time")
+
+    if output_dir is not None and not all(
+        (sessions, pages_per_session, scroll_depth, active_time),
+    ):
+        fallback = merge_clarity_kpi_fallback(ui_payload, output_dir)
+        sessions = sessions or fallback.get("sessions")
+        pages_per_session = pages_per_session or fallback.get("pages_per_session")
+        scroll_depth = scroll_depth or fallback.get("scroll_depth")
+        active_time = active_time or fallback.get("active_time")
 
     merged = dict(api_summary)
     if sessions:
@@ -1466,6 +1494,14 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             ",".join(str(a).strip() for a in aliases if str(a).strip()),
         ])
     cmd.extend(["--client-id", client.id])
+    fiche_match = gmb_cfg.get("ui_fiche_match") or []
+    if isinstance(fiche_match, str):
+        fiche_match = [fiche_match]
+    fiche_hints = [
+        str(item).strip() for item in fiche_match if str(item).strip()
+    ]
+    if fiche_hints:
+        cmd.extend(["--fiche-match", ",".join(fiche_hints)])
     session_owner = gmb_ui_session_owner(client)
     using_foreign_session = session_owner != client.id
     perf_url = ""
