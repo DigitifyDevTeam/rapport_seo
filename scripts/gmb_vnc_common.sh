@@ -54,3 +54,24 @@ gmb_vnc_python() {
     seo-vnc \
     python "$@"
 }
+
+# After VPS IP change: backup old cookies and start with a clean Chrome profile.
+gmb_vnc_reset_sessions() {
+  cd "${GMB_VNC_ROOT}"
+  local backup sessions="${GMB_VNC_ROOT}/outputs/_sessions"
+  backup="${sessions}/_vps_reset_$(date +%Y%m%d_%H%M%S)"
+  mkdir -p "${backup}"
+  echo "Backing up stale session files to ${backup}"
+  shopt -s nullglob
+  for f in "${sessions}"/gmb-*.json "${sessions}"/gmb-performance-*.txt; do
+    if [[ -f "${f}" ]]; then
+      mv "${f}" "${backup}/"
+    fi
+  done
+  shopt -u nullglob
+  if [[ -d "${sessions}/chrome-profile-gmb-vps" ]]; then
+    mv "${sessions}/chrome-profile-gmb-vps" "${backup}/chrome-profile-gmb-vps"
+  fi
+  mkdir -p "${sessions}/chrome-profile-gmb-vps"
+  echo "Fresh VPS profile ready."
+}

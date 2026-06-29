@@ -19,17 +19,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Page, sync_playwright
 
 from scripts.gmb_ui_extract import (  # noqa: E402
+    GMB_LOCATIONS_URL,
     _apply_google_compat,
     _discover_performance_url,
     _open_gmb_performance_direct,
+    _persist_session,
     _save_client_performance_url,
 )
-from scripts.gmb_ui_login import unlock_chrome_profile
+from scripts.gmb_ui_login import (  # noqa: E402
+    _find_performance_target,
+    _page_shows_performance_ui,
+    _print_tab_status,
+    _url_looks_like_performance,
+    unlock_chrome_profile,
+)
 from scripts.playwright_browser import docker_chromium_args, gmb_profile_dir
-from src.config import get_client, gmb_ui_session_path
+from src.config import ClientConfig, get_client, gmb_ui_session_path
 
 
 def _browser_channel() -> str | None:
@@ -45,6 +53,55 @@ def _profile_for_client(client_id: str) -> Path:
     if client_id == "deepcleaning":
         fallback = str(sessions / "chrome-profile-gmb")
     return Path(gmb_profile_dir(sessions, fallback=fallback))
+
+
+def _wait_for_manual_performance(context, page: Page, project: str) -> Page | None:
+    """Keep the browser open until the user signs in and opens Performance in noVNC."""
+    try:
+        if "accounts.google.com" not in (page.url or ""):
+            page.goto(GMB_LOCATIONS_URL, wait_until="domcontentloaded", timeout=60_000)
+    except Exception:
+        pass
+    print("")
+    print("Auto-navigation stopped (sign-in required — normal after a VPS IP change).")
+    print("1) Sign in in the Chrome window in noVNC.")
+    print(f"2) Open Performances for {project!r} on business.google.com.")
+    print("3) Press ENTER here when the Performance page is visible.")
+    print("")
+    while True:
+        input("Press ENTER when Performance is visible: ")
+        perf_page, perf_url, reason = _find_performance_target(context)
+        _print_tab_status(context)
+        if perf_page and (
+            _url_looks_like_performance(perf_url)
+            or _page_shows_performance_ui(perf_page)
+        ):
+            print(f"\n  OK — {reason}")
+            return perf_page
+        print(
+            "\n  Performance not detected yet.\n"
+            "  Finish sign-in, open Performances, then press ENTER again.",
+        )
+
+
+def _maybe_persist_shared_session(
+    client: ClientConfig,
+    session_path: Path,
+    context,
+    page: Page,
+) -> None:
+    """Save cookies after a manual VPS login (shared Google account)."""
+    shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    sessions = ROOT / "outputs" / "_sessions"
+    if shared:
+        master = sessions / f"gmb-{shared}.json"
+        if not master.is_file():
+            _persist_session(master, context, page)
+            print(f"Saved shared session → {master.name}")
+            return
+    if not session_path.is_file():
+        _persist_session(session_path, context, page)
+        print(f"Saved session → {session_path.name}")
 
 
 def main() -> int:
@@ -107,19 +164,25 @@ def main() -> int:
 
         print(f"Opening business.google.com for {project!r} …")
         perf_page = _open_gmb_performance_direct(page, project, aliases)
+        if perf_page is None and args.show:
+            perf_page = _wait_for_manual_performance(context, page, project)
         if perf_page is None:
-            print("Could not open Performance. Sign in in the browser, then retry.")
+            print("Could not open Performance.")
+            if not args.show:
+                print("Run with --show to sign in manually in the browser.")
             context.close()
             return 1
+
         time.sleep(3.0)
         url = perf_page.url or _discover_performance_url(perf_page)
         if not url:
-            url = page.url or ""
+            url = perf_page.url or page.url or ""
         print(f"Performance URL: {url[:120]}…")
         _save_client_performance_url(args.client_id, session_path, url)
         out = session_path.parent / f"gmb-performance-{args.client_id}.txt"
         print(f"Saved → {out}")
         if args.show:
+            _maybe_persist_shared_session(client, session_path, context, perf_page)
             input("Press ENTER to close the browser…")
         context.close()
 
