@@ -28,6 +28,7 @@ const path = require("path");
 const readline = require("readline");
 const { spawnSync } = require("child_process");
 const puppeteer = require("puppeteer");
+const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
 const CLARITY_UI_CAPTURE_VERSION = "hidpi-v2";
@@ -1486,12 +1487,14 @@ async function main() {
       "--disable-dev-shm-usage",
     );
   }
-  const browser = await puppeteer.launch({
-    headless: show || record ? false : "new",
-    defaultViewport: BROWSER_VIEWPORT,
-    args: browserArgs,
-    ignoreDefaultArgs: ["--enable-automation"],
-  });
+  const browser = await puppeteer.launch(
+    puppeteerLaunchOptions({
+      headless: show || record ? false : "new",
+      defaultViewport: BROWSER_VIEWPORT,
+      args: browserArgs,
+      ignoreDefaultArgs: ["--enable-automation"],
+    }),
+  );
   await browser.defaultBrowserContext().setDownloadBehavior({
     policy: "allow",
     downloadPath: downloadDir,

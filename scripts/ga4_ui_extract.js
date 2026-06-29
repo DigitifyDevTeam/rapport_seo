@@ -18,6 +18,7 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
+const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 const GA4_UI_CAPTURE_VERSION = 2;
 
@@ -218,19 +219,23 @@ async function main() {
   let browser;
   let page;
   if (opts.profile && fs.existsSync(opts.profile)) {
-    browser = await puppeteer.launch({
-      headless: !opts.show,
-      defaultViewport: { width: 1600, height: 900 },
-      userDataDir: path.resolve(opts.profile),
-      args: launchArgs,
-    });
+    browser = await puppeteer.launch(
+      puppeteerLaunchOptions({
+        headless: !opts.show,
+        defaultViewport: { width: 1600, height: 900 },
+        userDataDir: path.resolve(opts.profile),
+        args: launchArgs,
+      }),
+    );
     page = (await browser.pages())[0] || (await browser.newPage());
   } else {
-    browser = await puppeteer.launch({
-      headless: !opts.show,
-      defaultViewport: { width: 1440, height: 900 },
-      args: launchArgs,
-    });
+    browser = await puppeteer.launch(
+      puppeteerLaunchOptions({
+        headless: !opts.show,
+        defaultViewport: { width: 1440, height: 900 },
+        args: launchArgs,
+      }),
+    );
     page = await browser.newPage();
     await applySession(page, session);
   }

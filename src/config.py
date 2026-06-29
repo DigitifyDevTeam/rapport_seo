@@ -195,6 +195,12 @@ def resolve_google_chrome_profile(
 ) -> Path | None:
     """First existing Chrome user-data dir for Google UI (GA4, GMB, etc.)."""
     base = sessions_dir or (OUTPUTS_DIR / "_sessions")
+    override = (os.environ.get("SEO_REPORT_GMB_PROFILE") or "").strip()
+    if override:
+        path = Path(override)
+        if path.is_dir():
+            return path
+
     ga4_cfg = client.ga4 or {}
     gmb_cfg = client.gmb or {}
     seen: set[str] = set()
@@ -220,6 +226,7 @@ def resolve_google_chrome_profile(
     if account:
         candidates.append(base / f"chrome-profile-ga4-{account.lower()}")
     candidates.append(base / f"chrome-profile-ga4-{client.id}")
+    candidates.append(base / "chrome-profile-gmb-vps")
     candidates.append(base / "chrome-profile-gmb")
 
     for path in candidates:
