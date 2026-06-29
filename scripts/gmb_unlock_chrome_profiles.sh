@@ -16,7 +16,7 @@ _unlock_dir() {
 }
 
 shopt -s nullglob
-for dir in "${SESSIONS}"/chrome-profile-gmb* "${SESSIONS}"/chrome-profile; do
+for dir in "${SESSIONS}"/chrome-profile-gmb* "${SESSIONS}"/chrome-profile "${SESSIONS}"/chrome-profile-gmb-vps; do
   _unlock_dir "${dir}"
 done
 

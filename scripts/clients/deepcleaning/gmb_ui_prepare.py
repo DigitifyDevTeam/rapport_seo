@@ -16,8 +16,15 @@ import urllib.parse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT))
+
+from scripts.playwright_browser import gmb_profile_dir
+
 SESSION = ROOT / "outputs" / "_sessions" / "gmb-deepcleaning.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
+PROFILE = Path(gmb_profile_dir(
+    ROOT / "outputs" / "_sessions",
+    fallback=str(ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"),
+))
 SCRIPT = ROOT / "scripts" / "gmb_ui_login.py"
 SEARCH_QUERY = "Deep Cleaning Lavage et nettoyage professionnel Colombes"
 

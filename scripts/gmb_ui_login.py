@@ -26,6 +26,8 @@ from pathlib import Path
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
+from scripts.playwright_browser import docker_chromium_args
+
 PERF_URL_MARKERS = ("#mpd=", "promote/performance", "/performance")
 SIGNIN_MARKERS = (
     "accounts.google.com/v3/signin",
@@ -264,12 +266,13 @@ def main() -> int:
             print(f"Using profile: {profile}")
 
         channel = _resolve_browser_channel(args.channel)
+        browser_args = docker_chromium_args()
         launch_kw = dict(
             headless=False,
             channel=channel,
             ignore_default_args=["--enable-automation"],
             args=[
-                "--disable-blink-features=AutomationControlled",
+                *browser_args,
                 "--disable-infobars",
             ],
         )
