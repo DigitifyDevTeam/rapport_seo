@@ -27,7 +27,7 @@ case "${CLIENT}" in
     echo "Shared-account clients: deepcleaning, origincbd, digitify" >&2
     echo "For cchabitat (separate Google account):" >&2
     echo "  ./scripts/vnc_start.sh" >&2
-    echo "  docker compose --profile tools exec -it -e DISPLAY=:0 seo-vnc \\" >&2
+    echo "  docker compose --profile tools exec -it -e DISPLAY=:99 seo-vnc \\" >&2
     echo "    python scripts/clients/cchabitat/gmb_ui_prepare.py" >&2
     exit 1
     ;;

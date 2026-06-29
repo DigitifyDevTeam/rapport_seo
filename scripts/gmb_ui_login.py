@@ -53,6 +53,33 @@ def _default_profile_for_out(out_path: Path) -> Path | None:
     return None
 
 
+def _resolve_browser_channel(raw: str) -> str | None:
+    channel = (raw or "").strip().lower()
+    if channel in ("", "chromium", "bundled"):
+        return None
+    return channel
+
+
+def unlock_chrome_profile(profile: Path) -> None:
+    """Drop Chromium singleton locks (profile synced from Windows or stale VPS run)."""
+    root = profile.resolve()
+    if not root.is_dir():
+        return
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        try:
+            (root / name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    default_dir = root / "Default"
+    if default_dir.is_dir():
+        for name in ("LOCK", "lockfile"):
+            try:
+                (default_dir / name).unlink(missing_ok=True)
+            except OSError:
+                pass
+    print(f"Unlocked Chrome profile (if needed): {root}")
+
+
 def _is_signin_url(url: str) -> bool:
     url = url or ""
     return "accounts.google.com" in url and any(m in url for m in SIGNIN_MARKERS)
@@ -233,11 +260,13 @@ def main() -> int:
             profile = _default_profile_for_out(out_path)
         if profile:
             profile.mkdir(parents=True, exist_ok=True)
+            unlock_chrome_profile(profile)
             print(f"Using profile: {profile}")
 
+        channel = _resolve_browser_channel(args.channel)
         launch_kw = dict(
             headless=False,
-            channel=args.channel or None,
+            channel=channel,
             ignore_default_args=["--enable-automation"],
             args=[
                 "--disable-blink-features=AutomationControlled",
