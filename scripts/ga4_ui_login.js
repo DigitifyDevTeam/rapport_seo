@@ -11,6 +11,7 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
+const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -32,14 +33,16 @@ async function main() {
   const outPath = path.resolve(out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
-  const browser = await puppeteer.launch({
-    headless: false,
-    defaultViewport: null,
-    executablePath: chromePath || undefined,
-    userDataDir: profile ? path.resolve(profile) : undefined,
-    ignoreDefaultArgs: ["--enable-automation"],
-    args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
-  });
+  const browser = await puppeteer.launch(
+    puppeteerLaunchOptions({
+      headless: false,
+      defaultViewport: null,
+      executablePath: chromePath || undefined,
+      userDataDir: profile ? path.resolve(profile) : undefined,
+      ignoreDefaultArgs: ["--enable-automation"],
+      args: ["--start-maximized", "--disable-blink-features=AutomationControlled"],
+    }),
+  );
 
   const page = (await browser.pages())[0] || (await browser.newPage());
   await page.goto("https://analytics.google.com/", {

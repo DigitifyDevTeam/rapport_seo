@@ -20,6 +20,7 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
+const { puppeteerLaunchOptions } = require("../../puppeteer_chrome");
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -43,17 +44,19 @@ async function main() {
 
   const userDataDir = profile ? path.resolve(profile) : undefined;
 
-  const browser = await puppeteer.launch({
-    headless: false,
-    defaultViewport: null,
-    executablePath: chromePath || undefined,
-    userDataDir,
-    ignoreDefaultArgs: ["--enable-automation"],
-    args: [
-      "--start-maximized",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  });
+  const browser = await puppeteer.launch(
+    puppeteerLaunchOptions({
+      headless: false,
+      defaultViewport: null,
+      executablePath: chromePath || undefined,
+      userDataDir,
+      ignoreDefaultArgs: ["--enable-automation"],
+      args: [
+        "--start-maximized",
+        "--disable-blink-features=AutomationControlled",
+      ],
+    }),
+  );
 
   const page = (await browser.pages())[0] || (await browser.newPage());
   await page.goto("https://clarity.microsoft.com/", { waitUntil: "networkidle2" });

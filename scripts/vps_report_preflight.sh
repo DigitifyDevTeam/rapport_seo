@@ -17,6 +17,10 @@ echo "=== 2) Unlock Chrome profiles ==="
 bash "${ROOT}/scripts/gmb_unlock_chrome_profiles.sh"
 
 echo ""
+echo "=== 2b) outputs/ permissions (root-owned files break GMB write) ==="
+bash "${ROOT}/scripts/vps_fix_outputs_permissions.sh" || true
+
+echo ""
 echo "=== 3) GMB sessions ==="
 docker compose run --rm --no-TTY seo-reports python scripts/check_gmb_vps_sessions.py || true
 
