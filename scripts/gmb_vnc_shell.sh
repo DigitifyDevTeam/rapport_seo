@@ -23,6 +23,5 @@ docker compose --profile tools exec -it \
   -e PYTHONPATH=/app \
   -e SEO_REPORT_VNC=1 \
   -e SEO_REPORT_GMB_PROFILE="${VPS_PROFILE}" \
-  -e DBUS_SESSION_BUS_ADDRESS=/dev/null \
   seo-vnc \
   bash

@@ -7,8 +7,8 @@
 #   bash scripts/gmb_ui_prepare_vnc_client.sh digitify
 #   bash scripts/gmb_ui_prepare_vnc_client.sh guivarche
 #
-# Separate Google account:
-#   bash scripts/gmb_ui_prepare_vnc_client.sh cchabitat
+# Separate Google account (reset if Chrome crashes on launch):
+#   bash scripts/gmb_ui_prepare_vnc_client.sh --fresh cchabitat
 #
 # After VPS IP change:
 #   bash scripts/gmb_ui_prepare_vnc_client.sh --fresh deepcleaning
@@ -43,7 +43,10 @@ case "${CLIENT}" in
 esac
 
 if [[ "${FRESH}" -eq 1 ]]; then
-  gmb_vnc_reset_sessions
+  case "${CLIENT}" in
+    cchabitat) gmb_vnc_reset_cchabitat ;;
+    *) gmb_vnc_reset_sessions ;;
+  esac
   echo ""
 fi
 

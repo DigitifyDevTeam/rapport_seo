@@ -22,13 +22,14 @@ import argparse
 import json
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
 from scripts.playwright_browser import docker_chromium_args
 
@@ -84,6 +85,41 @@ def unlock_chrome_profile(profile: Path) -> None:
             except OSError:
                 pass
     print(f"Unlocked Chrome profile (if needed): {root}")
+
+
+def launch_gmb_persistent_context(pw, profile: Path, launch_kw: dict) -> BrowserContext:
+    """Launch Chromium; on crash (common with Windows profile copies), retry fresh."""
+    unlock_chrome_profile(profile)
+
+    def _launch() -> BrowserContext:
+        return pw.chromium.launch_persistent_context(
+            user_data_dir=str(profile),
+            viewport={"width": 1600, "height": 900},
+            locale="fr-FR",
+            **launch_kw,
+        )
+
+    try:
+        return _launch()
+    except PlaywrightError as exc:
+        err = str(exc).lower()
+        if "target" not in err or "closed" not in err or not profile.is_dir():
+            raise
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = profile.with_name(f"{profile.name}.corrupt-{stamp}")
+        print(
+            f"\nChrome crashed with profile {profile}",
+            file=sys.stderr,
+        )
+        print(
+            "This often happens when a Windows Chrome profile was copied to the VPS.",
+            file=sys.stderr,
+        )
+        print(f"Moving to {backup.name} and retrying with a fresh profile…", file=sys.stderr)
+        profile.rename(backup)
+        profile.mkdir(parents=True)
+        unlock_chrome_profile(profile)
+        return _launch()
 
 
 def _is_signin_url(url: str) -> bool:
@@ -266,7 +302,6 @@ def main() -> int:
             profile = _default_profile_for_out(out_path)
         if profile:
             profile.mkdir(parents=True, exist_ok=True)
-            unlock_chrome_profile(profile)
             print(f"Using profile: {profile}")
 
         channel = _resolve_browser_channel(args.channel)
@@ -286,12 +321,7 @@ def main() -> int:
 
         browser: Browser | None = None
         if profile:
-            context = pw.chromium.launch_persistent_context(
-                user_data_dir=str(profile),
-                viewport={"width": 1600, "height": 900},
-                locale="fr-FR",
-                **launch_kw,
-            )
+            context = launch_gmb_persistent_context(pw, profile, launch_kw)
             page = context.pages[0] if context.pages else context.new_page()
             _apply_google_compat(context)
         else:

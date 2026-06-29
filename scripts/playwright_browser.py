@@ -35,6 +35,7 @@ def docker_chromium_args(*, vnc: bool | None = None) -> list[str]:
             "--use-gl=swiftshader",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-breakpad",
         ])
     return args
 

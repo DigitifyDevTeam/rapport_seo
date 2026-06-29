@@ -57,7 +57,6 @@ services:
     environment:
       - DISPLAY=:99
       - PYTHONPATH=/app
-      - DBUS_SESSION_BUS_ADDRESS=/dev/null
       - SEO_REPORT_VNC=1
     restart: unless-stopped
     volumes:

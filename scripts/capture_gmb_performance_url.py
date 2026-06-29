@@ -35,6 +35,7 @@ from scripts.gmb_ui_login import (  # noqa: E402
     _page_shows_performance_ui,
     _print_tab_status,
     _url_looks_like_performance,
+    launch_gmb_persistent_context,
     unlock_chrome_profile,
 )
 from scripts.playwright_browser import docker_chromium_args, gmb_profile_dir
@@ -148,17 +149,14 @@ def main() -> int:
     with sync_playwright() as p:
         if args.show:
             profile.mkdir(parents=True, exist_ok=True)
-            unlock_chrome_profile(profile)
             print(f"Using Chrome profile: {profile}")
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(profile),
+            launch_kw = dict(
                 headless=False,
                 channel=_browser_channel(),
                 ignore_default_args=["--enable-automation"],
                 args=browser_args,
-                viewport={"width": 1600, "height": 900},
-                locale="fr-FR",
             )
+            context = launch_gmb_persistent_context(p, profile, launch_kw)
             _apply_google_compat(context)
             page = context.pages[0] if context.pages else context.new_page()
         else:
