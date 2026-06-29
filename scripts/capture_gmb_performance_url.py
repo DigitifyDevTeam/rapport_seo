@@ -30,6 +30,13 @@ from scripts.gmb_ui_extract import (  # noqa: E402
 from src.config import get_client, gmb_ui_session_path
 
 
+def _browser_channel() -> str | None:
+    raw = (os.environ.get("SEO_REPORT_BROWSER_CHANNEL") or "chrome").strip().lower()
+    if raw in ("", "chromium", "bundled"):
+        return None
+    return raw
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client_id", help="e.g. deepcleaning, digitify, cchabitat")
@@ -50,7 +57,7 @@ def main() -> int:
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=not args.show,
-            channel="chrome",
+            channel=_browser_channel(),
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = browser.new_context(

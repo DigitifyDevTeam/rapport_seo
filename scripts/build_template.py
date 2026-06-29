@@ -40,7 +40,7 @@ from pptx.util import Inches, Pt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
 # Bump when slide order/structure changes (keep in sync with ensure_template.py).
-TEMPLATE_BUILD_VERSION = "2026-06-v3-backlinks-no-merci"
+TEMPLATE_BUILD_VERSION = "2026-06-v5-clarity-hero-charts"
 
 
 def resolve_template_path(output: str | None = None) -> Path:
@@ -100,12 +100,13 @@ TOC_ITEMS: list[tuple[str, int]] = [
     ("Trafic organique (GA4)", 5),
     ("Pages et écrans (GA4)", 6),
     ("Comportement (Clarity)", 7),
-    ("Performance Search (GSC)", 8),
-    ("Top pages (GSC)", 9),
-    ("Présence Google Business Profile", 10),
-    ("Interactions clients (détail)", 11),
-    ("Backlinks", 12),
-    ("Synthèse finale", 14),
+    ("Comportement (Clarity) — suite", 8),
+    ("Performance Search (GSC)", 9),
+    ("Top pages (GSC)", 10),
+    ("Présence Google Business Profile", 11),
+    ("Interactions clients (détail)", 12),
+    ("Backlinks", 13),
+    ("Synthèse finale", 15),
 ]
 
 FONT_TITLE = "Segoe UI"
@@ -366,7 +367,8 @@ def _picture_placeholder(slide, left, top, width, height, name: str) -> None:
 
 
 def _add_framed_picture_placeholder(slide, left, top, width, height,
-                                   name: str) -> None:
+                                   name: str, *,
+                                   inset=None) -> None:
     """Chart/screenshot slot with a visible rounded border (GMB detail grid)."""
     frame = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
                                    left, top, width, height)
@@ -375,13 +377,13 @@ def _add_framed_picture_placeholder(slide, left, top, width, height,
     frame.fill.fore_color.rgb = CARD_SURFACE
     frame.line.color.rgb = CARD_BORDER
     frame.line.width = Pt(0.75)
-    inset = CHART_SLOT_INSET
+    slot_inset = CHART_SLOT_INSET if inset is None else inset
     _picture_placeholder(
         slide,
-        left + inset,
-        top + inset,
-        width - 2 * inset,
-        height - 2 * inset,
+        left + slot_inset,
+        top + slot_inset,
+        width - 2 * slot_inset,
+        height - 2 * slot_inset,
         name,
     )
 
@@ -880,10 +882,59 @@ def build_gmb_details(prs: Presentation) -> None:
             slide, left, img_top, chart_w, img_h, name)
 
 
+def _add_clarity_chart_row(
+    slide,
+    charts: list[tuple[str, str]],
+    inner_left: int,
+    charts_top: int,
+    inner_w: int,
+    charts_area_h: int,
+    *,
+    hero: bool = False,
+) -> int:
+    """Lay out *charts* in one row; return the Y coordinate below the row."""
+    gap = Inches(0.16) if hero else GRID_GAP
+    caption_h = Inches(0.24) if hero else Inches(0.3)
+    chart_w = _fit_row(len(charts), inner_w, gap)
+    chart_h = int(charts_area_h - caption_h)
+    charts_total_w = chart_w * len(charts) + gap * (len(charts) - 1)
+    charts_left = inner_left + int((inner_w - charts_total_w) / 2)
+    for idx, (caption, name) in enumerate(charts):
+        left = charts_left + idx * (chart_w + gap)
+        _add_text_box(
+            slide, left, charts_top, chart_w, caption_h,
+            caption, size=12 if hero else 11, bold=True, color=PRIMARY,
+            align=PP_ALIGN.LEFT if hero else PP_ALIGN.CENTER,
+        )
+        if hero:
+            _add_band(slide, left, charts_top + caption_h - Inches(0.02),
+                      Inches(0.72), Inches(0.035), ACCENT)
+        img_top = charts_top + caption_h
+        if hero:
+            _add_framed_picture_placeholder(
+                slide, left, img_top, chart_w, chart_h, name,
+                inset=Inches(0.03),
+            )
+        else:
+            _picture_placeholder(
+                slide,
+                left + CHART_SLOT_INSET,
+                img_top + CHART_SLOT_INSET,
+                chart_w - 2 * CHART_SLOT_INSET,
+                chart_h - 2 * CHART_SLOT_INSET,
+                name,
+            )
+    return charts_top + caption_h + chart_h
+
+
 def build_clarity(prs: Presentation) -> None:
-    slide = _slide_with_title(prs, "Comportement (Clarity)",
-                                "Signaux d'expérience utilisateur")
-    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide, prs)
+    gap = GRID_GAP
+    commentary_h = Inches(0.38)
+
+    slide1 = _slide_with_title(
+        prs, "Comportement (Clarity)", "Signaux d'expérience utilisateur",
+    )
+    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide1, prs)
     inner_left, inner_top, inner_w, inner_h = _inner_rect(
         panel_left, panel_top, panel_w, panel_h)
 
@@ -893,48 +944,55 @@ def build_clarity(prs: Presentation) -> None:
         ("Profondeur de défilement", "{{clarity_scroll_depth}}"),
         ("Temps d'activité passé", "{{clarity_active_time}}"),
     ]
-    gap = GRID_GAP
-    kpi_h = int(Inches(1.22))
+    kpi_h = int(Inches(0.84))
     kpi_w = _fit_row(len(kpi_cards), inner_w, gap)
     cards_top = inner_top
     for idx, (label, value) in enumerate(kpi_cards):
         left = inner_left + idx * (kpi_w + gap)
-        _add_kpi_card(slide, left, cards_top, kpi_w, kpi_h, label, value, "",
-                       variant_index=idx)
-
-    charts = [
-        ("Appareils", "chart_clarity_devices"),
-        ("Référents", "chart_clarity_referrers"),
-        ("Pages supérieures", "chart_clarity_popular_pages"),
-        ("Produits populaires", "chart_clarity_popular_products"),
-    ]
-    caption_h = Inches(0.3)
-    commentary_h = Inches(0.42)
-    charts_top = cards_top + kpi_h + gap
-    charts_area_h = inner_h - kpi_h - gap - commentary_h - gap
-    chart_w = _fit_row(len(charts), inner_w, gap)
-    chart_h = int(charts_area_h - caption_h)
-    charts_total_w = chart_w * len(charts) + gap * (len(charts) - 1)
-    charts_left = inner_left + int((inner_w - charts_total_w) / 2)
-    for idx, (caption, name) in enumerate(charts):
-        left = charts_left + idx * (chart_w + gap)
-        _add_text_box(slide, left, charts_top, chart_w, caption_h,
-                       caption, size=11, bold=True, color=PRIMARY,
-                       align=PP_ALIGN.CENTER)
-        img_top = charts_top + caption_h
-        _picture_placeholder(
-            slide,
-            left + CHART_SLOT_INSET,
-            img_top + CHART_SLOT_INSET,
-            chart_w - 2 * CHART_SLOT_INSET,
-            chart_h - 2 * CHART_SLOT_INSET,
-            name,
+        _add_kpi_card(
+            slide1, left, cards_top, kpi_w, kpi_h, label, value, "",
+            variant_index=idx, compact=True,
         )
-    commentary_top = charts_top + caption_h + chart_h + gap
-    _add_text_box(slide, inner_left, commentary_top,
-                  inner_w, commentary_h,
-                  "{{clarity_commentary}}", size=11, color=TEXT,
-                  align=PP_ALIGN.CENTER)
+
+    charts_gap = Inches(0.14)
+    charts_top = cards_top + kpi_h + charts_gap
+    charts_area_h = inner_h - kpi_h - charts_gap
+    _add_clarity_chart_row(
+        slide1,
+        [
+            ("Appareils", "chart_clarity_devices"),
+            ("Référents", "chart_clarity_referrers"),
+        ],
+        inner_left,
+        charts_top,
+        inner_w,
+        charts_area_h,
+        hero=True,
+    )
+
+    slide2 = _slide_with_title(
+        prs, "Comportement (Clarity)", "Pages et produits populaires",
+    )
+    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide2, prs)
+    inner_left, inner_top, inner_w, inner_h = _inner_rect(
+        panel_left, panel_top, panel_w, panel_h)
+    charts_area_h = inner_h - commentary_h - gap
+    charts_bottom = _add_clarity_chart_row(
+        slide2,
+        [
+            ("Pages supérieures", "chart_clarity_popular_pages"),
+            ("Produits populaires", "chart_clarity_popular_products"),
+        ],
+        inner_left,
+        inner_top,
+        inner_w,
+        charts_area_h,
+        hero=True,
+    )
+    _add_text_box(
+        slide2, inner_left, charts_bottom + gap, inner_w, commentary_h,
+        "{{clarity_commentary}}", size=11, color=TEXT, align=PP_ALIGN.CENTER,
+    )
 
 
 def _render_thank_you_gauge_png() -> bytes:

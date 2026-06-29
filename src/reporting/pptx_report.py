@@ -71,7 +71,7 @@ class ReportBuilder:
         prs = self._open_presentation()
         if data.get("clarity_hide_popular_products"):
             for slide in prs.slides:
-                if self._is_clarity_slide(slide):
+                if self._slide_has_clarity_popular_products(slide):
                     self._remove_clarity_popular_products_column(slide)
         for slide in prs.slides:
             self._fill_slide(slide, data)
@@ -92,17 +92,18 @@ class ReportBuilder:
             return fallback
 
     @staticmethod
-    def _is_clarity_slide(slide) -> bool:
+    def _slide_has_clarity_popular_products(slide) -> bool:
         for shape in slide.shapes:
-            if shape.has_text_frame and "Comportement (Clarity)" in (
-                shape.text_frame.text or ""
-            ):
+            if not shape.has_text_frame:
+                continue
+            text = shape.text_frame.text or ""
+            if "chart_clarity_popular_products" in text:
                 return True
         return False
 
     @staticmethod
     def _remove_clarity_popular_products_column(slide) -> None:
-        """Drop Produits populaires column and widen the 3 remaining chart slots."""
+        """Drop Produits populaires and widen the remaining chart slot(s)."""
         clusters: list[list[Any]] = []
         tolerance = 120_000
 
@@ -132,7 +133,28 @@ class ReportBuilder:
         if not clusters:
             return
         clusters.sort(key=lambda group: group[0].left)
-        if len(clusters) < 2:
+        if len(clusters) == 1:
+            group = clusters[0]
+            anchor = group[0]
+            panel_left = anchor.left
+            panel_right = anchor.left + anchor.width
+            for shape in slide.shapes:
+                if not shape.has_text_frame:
+                    continue
+                text = shape.text_frame.text or ""
+                if "chart_clarity_" not in text:
+                    continue
+                right = shape.left + shape.width
+                if right > panel_right:
+                    panel_right = right
+                if shape.left < panel_left:
+                    panel_left = shape.left
+            span = panel_right - panel_left
+            delta = panel_left - anchor.left
+            for shape in group:
+                shape.left = int(shape.left - delta)
+                if shape.width > 0:
+                    shape.width = span
             return
         gap = clusters[1][0].left - (clusters[0][0].left + clusters[0][0].width)
         if gap < 0:
@@ -323,7 +345,10 @@ class ReportBuilder:
         slide.shapes._spTree.remove(shape._element)  # noqa: SLF001
         fit_left, fit_top, fit_w, fit_h = _fitted_picture_bounds(
             left, top, width, height, path,
-            margin_ratio=_PICTURE_MARGIN_RATIO,
+            margin_ratio=(
+                0.012 if placeholder_name.startswith("chart_clarity_")
+                else _PICTURE_MARGIN_RATIO
+            ),
         )
         picture_path = path
         enhanced_path: Path | None = None

@@ -23,6 +23,6 @@ echo ""
 echo "Open noVNC in your browser (password: vnc):"
 echo "  http://<your-vps-ip>:7900/vnc.html"
 echo ""
-echo "Starting GMB prepare inside the container..."
-docker compose --profile tools exec -e DISPLAY=:0 seo-vnc \
+echo "Starting GMB prepare inside the container (interactive)..."
+docker compose --profile tools exec -it -e DISPLAY=:0 seo-vnc \
   python scripts/gmb_ui_prepare_shared_account.py "$@"
