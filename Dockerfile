@@ -45,6 +45,7 @@ RUN chmod +x /app/docker-entrypoint.sh /app/cron_monthly_reports.sh /app/cron_do
     /app/scripts/vnc_open_firewall.sh /app/scripts/gmb_ui_prepare_vnc.sh \
     /app/scripts/gmb_ui_prepare_vnc_client.sh /app/scripts/gmb_unlock_chrome_profiles.sh \
     /app/scripts/gmb_vnc_shell.sh /app/scripts/gmb_vnc_common.sh \
+    /app/scripts/vps_report_preflight.sh \
     && mkdir -p /app/outputs /app/logs /app/secrets
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

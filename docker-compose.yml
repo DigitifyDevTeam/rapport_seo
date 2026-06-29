@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     image: rapport-seo:latest
+    # Same as seo-vnc: host network avoids broken Docker outbound on some OVH VPS.
+    network_mode: host
     working_dir: /app
     env_file:
       - .env
