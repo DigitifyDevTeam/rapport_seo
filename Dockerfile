@@ -41,6 +41,9 @@ COPY templates ./templates
 COPY cron_monthly_reports.sh cron_docker_monthly_reports.sh docker-entrypoint.sh ./
 
 RUN chmod +x /app/docker-entrypoint.sh /app/cron_monthly_reports.sh /app/cron_docker_monthly_reports.sh \
+    /app/scripts/vnc_start.sh /app/scripts/vnc_server.sh /app/scripts/vnc_health.sh \
+    /app/scripts/vnc_open_firewall.sh /app/scripts/gmb_ui_prepare_vnc.sh \
+    /app/scripts/gmb_ui_prepare_vnc_client.sh \
     && mkdir -p /app/outputs /app/logs /app/secrets
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

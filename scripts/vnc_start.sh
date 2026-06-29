@@ -2,6 +2,7 @@
 # Start or restart noVNC for manual GMB / browser login on the VPS.
 #
 #   ./scripts/vnc_start.sh
+#   bash scripts/vnc_start.sh    # if Permission denied after git pull
 #
 # Open: http://<vps-ip>:7900/vnc.html   password: vnc
 # Or SSH tunnel (no extra firewall port): see ./scripts/vnc_open_firewall.sh
