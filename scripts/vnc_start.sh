@@ -28,7 +28,7 @@ if ! docker compose --profile tools up -d --force-recreate seo-vnc 2>&1; then
   exit 1
 fi
 
-sleep 4
+sleep 8
 if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo ""
   if bash "${ROOT}/scripts/vnc_health.sh"; then

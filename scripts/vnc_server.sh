@@ -1,42 +1,36 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 # noVNC for manual GMB login on a headless VPS.
 # Open: http://<vps-ip>:7900/vnc.html  password: vnc
-#
-# Important: websockify proxies to localhost:5900, so x11vnc MUST stay alive.
 
-export DISPLAY="${DISPLAY:-:0}"
+export DISPLAY="${DISPLAY:-:99}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
 mkdir -p "${XDG_RUNTIME_DIR}"
 chmod 700 "${XDG_RUNTIME_DIR}" || true
 
 VNC_PORT=5900
 WEB_PORT=7900
+DISPLAY_NUM="${DISPLAY#:}"
 
-# Logs must go to stderr — stdout is used for function return values (paths, PIDs).
 _log() { echo "[vnc] $*" >&2; }
 
-_port_listening() {
-  local port="${1:?port}"
-  if command -v ss >/dev/null 2>&1; then
-    ss -tln 2>/dev/null | grep -qE ":${port}\\b"
+_http_ready() {
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf -o /dev/null -m 2 "http://127.0.0.1:${WEB_PORT}/vnc.html"
     return $?
   fi
-  if command -v netstat >/dev/null 2>&1; then
-    netstat -tln 2>/dev/null | grep -qE ":${port}\\b"
-    return $?
-  fi
-  # Fallback: avoid probing the VNC port (raw TCP causes x11vnc log noise).
-  return 1
+  python3 - <<PY
+import urllib.request
+urllib.request.urlopen("http://127.0.0.1:${WEB_PORT}/vnc.html", timeout=2)
+PY
 }
 
-_wait_port_listening() {
-  local port="${1:?port}"
-  local tries="${2:-40}"
+_wait_http_ready() {
+  local tries="${1:-40}"
   local i
   for i in $(seq 1 "${tries}"); do
-    if _port_listening "${port}"; then
+    if _http_ready; then
       return 0
     fi
     sleep 0.25
@@ -44,24 +38,27 @@ _wait_port_listening() {
   return 1
 }
 
-_kill_vnc_listeners() {
+_cleanup_display() {
   pkill -9 -f '[w]ebsockify' 2>/dev/null || true
   pkill -9 -f '[x]11vnc' 2>/dev/null || true
+  pkill -9 -x fluxbox 2>/dev/null || true
+  pkill -9 -x xterm 2>/dev/null || true
+  pkill -9 -x Xvfb 2>/dev/null || true
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${VNC_PORT}"/tcp "${WEB_PORT}"/tcp 2>/dev/null || true
   fi
-  sleep 0.4
+  rm -f "/tmp/.X${DISPLAY_NUM}-lock" 2>/dev/null || true
+  rm -f "/tmp/.X11-unix/X${DISPLAY_NUM}" 2>/dev/null || true
+  sleep 0.5
 }
 
 _start_xvfb() {
-  if pgrep -x Xvfb >/dev/null 2>&1; then
-    return 0
-  fi
   _log "starting Xvfb on ${DISPLAY}"
   Xvfb "${DISPLAY}" -screen 0 1440x900x24 -ac +extension RANDR >/tmp/xvfb.log 2>&1 &
   local i
-  for i in $(seq 1 40); do
+  for i in $(seq 1 50); do
     if xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
+      _log "Xvfb ready on ${DISPLAY}"
       return 0
     fi
     sleep 0.2
@@ -72,20 +69,14 @@ _start_xvfb() {
 }
 
 _start_fluxbox() {
-  if pgrep -x fluxbox >/dev/null 2>&1; then
-    return 0
-  fi
-  fluxbox >/tmp/fluxbox.log 2>&1 &
+  fluxbox -display "${DISPLAY}" >/tmp/fluxbox.log 2>&1 &
   sleep 0.3
 }
 
 _start_terminal() {
-  if pgrep -x xterm >/dev/null 2>&1; then
-    return 0
-  fi
   if command -v xterm >/dev/null 2>&1; then
-    _log "starting xterm (right-click desktop also opens Fluxbox menu)"
-    xterm -geometry 100x30+40+40 >/tmp/xterm.log 2>&1 &
+    _log "starting xterm"
+    xterm -display "${DISPLAY}" -geometry 100x30+40+40 >/tmp/xterm.log 2>&1 &
   fi
 }
 
@@ -110,16 +101,16 @@ _find_novnc_web() {
 }
 
 _x11vnc_healthy() {
-  pgrep -f '[x]11vnc' >/dev/null 2>&1 && _port_listening "${VNC_PORT}"
+  pgrep -f '[x]11vnc' >/dev/null 2>&1
 }
 
 _websockify_healthy() {
-  pgrep -f '[w]ebsockify' >/dev/null 2>&1 && _port_listening "${WEB_PORT}"
+  pgrep -f '[w]ebsockify' >/dev/null 2>&1 && _http_ready
 }
 
 _start_x11vnc() {
   if _x11vnc_healthy; then
-    _log "x11vnc already running on port ${VNC_PORT}"
+    _log "x11vnc already running"
     return 0
   fi
   local passfile
@@ -134,8 +125,9 @@ _start_x11vnc() {
     -listen 127.0.0.1 \
     -noxdamage \
     >/tmp/x11vnc.log 2>&1 &
-  if ! _wait_port_listening "${VNC_PORT}" 30; then
-    _log "x11vnc did not open port ${VNC_PORT}"
+  sleep 1
+  if ! _x11vnc_healthy; then
+    _log "x11vnc failed to start"
     tail -30 /tmp/x11vnc.log 2>/dev/null || true
     return 1
   fi
@@ -155,8 +147,8 @@ _start_websockify() {
   _log "starting websockify on ${WEB_PORT} -> ${VNC_PORT} (web=${novnc_web})"
   websockify --web "${novnc_web}" "0.0.0.0:${WEB_PORT}" "localhost:${VNC_PORT}" \
     >/tmp/websockify.log 2>&1 &
-  if ! _wait_port_listening "${WEB_PORT}" 30; then
-    _log "websockify did not open port ${WEB_PORT}"
+  if ! _wait_http_ready 40; then
+    _log "websockify did not serve /vnc.html on port ${WEB_PORT}"
     tail -30 /tmp/websockify.log 2>/dev/null || true
     return 1
   fi
@@ -165,41 +157,44 @@ _start_websockify() {
 
 _restart_x11vnc() {
   pkill -9 -f '[x]11vnc' 2>/dev/null || true
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${VNC_PORT}"/tcp 2>/dev/null || true
-  fi
   sleep 0.5
   _start_x11vnc
 }
 
 _restart_websockify() {
   pkill -9 -f '[w]ebsockify' 2>/dev/null || true
-  if command -v fuser >/dev/null 2>&1; then
-    fuser -k "${WEB_PORT}"/tcp 2>/dev/null || true
-  fi
   sleep 0.5
   _start_websockify
 }
 
-_kill_vnc_listeners
+_cleanup_display
 
-_start_xvfb
+if ! _start_xvfb; then
+  _log "FATAL: could not start Xvfb"
+  exit 1
+fi
 _start_fluxbox
 _start_terminal
 
-_start_x11vnc
-_start_websockify
+if ! _start_x11vnc; then
+  _log "FATAL: could not start x11vnc"
+  exit 1
+fi
+if ! _start_websockify; then
+  _log "FATAL: could not start websockify"
+  exit 1
+fi
 
 _log "noVNC: http://0.0.0.0:${WEB_PORT}/vnc.html  (password: vnc)"
 
 while true; do
   if ! _x11vnc_healthy; then
-    _log "x11vnc unhealthy; restarting (tail /tmp/x11vnc.log):"
+    _log "x11vnc unhealthy; restarting"
     tail -10 /tmp/x11vnc.log 2>/dev/null || true
     _restart_x11vnc || true
   fi
   if ! _websockify_healthy; then
-    _log "websockify unhealthy; restarting (tail /tmp/websockify.log):"
+    _log "websockify unhealthy; restarting"
     tail -10 /tmp/websockify.log 2>/dev/null || true
     _restart_websockify || true
   fi
