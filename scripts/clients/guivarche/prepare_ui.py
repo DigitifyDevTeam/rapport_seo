@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
 def _run(cmd: list[str], *, label: str) -> int:
     print(f"\n=== {label} ===\n")
     print(" ".join(cmd))
-    return subprocess.call(cmd, cwd=str(ROOT))
+    return subprocess.call(cmd, cwd=str(ROOT), stdin=sys.stdin)
 
 
 def main() -> int:
@@ -30,14 +30,19 @@ def main() -> int:
     args = parser.parse_args()
 
     code = 0
+    node = "node"
+    clarity_session = ROOT / "outputs" / "_sessions" / "clarity-guivarche.json"
     if not args.skip_clarity:
-        node = "node"
-        code = _run(
-            [node, str(ROOT / "scripts" / "clients" / "guivarche" / "clarity_ui_login.js")],
-            label="Clarity login (Microsoft)",
-        )
-        if code != 0:
-            return code
+        if clarity_session.is_file():
+            print(f"\nClarity session already exists: {clarity_session}")
+            print("  (skip with --skip-clarity to run GMB only)\n")
+        else:
+            code = _run(
+                [node, str(ROOT / "scripts" / "clients" / "guivarche" / "clarity_ui_login.js")],
+                label="Clarity login (Microsoft)",
+            )
+            if code != 0:
+                return code
 
     if not args.skip_gmb:
         code = _run(

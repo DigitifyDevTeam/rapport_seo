@@ -798,6 +798,8 @@ def _unlock_gmb_chrome_profiles() -> None:
         logger.warning("[ga4-ui] profile unlock failed: %s", exc)
 
 
+def _capture_ga4_ui_playwright(client: ClientConfig, period: Period,
+                               *, show: bool = False) -> bool:
     """Playwright + persistent Chrome profile (preferred, runs every report)."""
     if not _GA4_UI_CAPTURE_SCRIPT.exists():
         logger.warning("[ga4-ui] missing %s", _GA4_UI_CAPTURE_SCRIPT)

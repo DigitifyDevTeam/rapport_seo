@@ -92,6 +92,11 @@ async function main() {
   console.log(`Captured dashboard URL: ${url}`);
 
   await browser.close();
+  // Windows: detached Chrome (userDataDir) can keep Node alive after close().
+  if (process.stdin.isTTY) {
+    process.stdin.pause();
+  }
+  process.exit(0);
 }
 
 main().catch((err) => {
