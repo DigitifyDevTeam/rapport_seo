@@ -68,7 +68,7 @@ if command -v ufw >/dev/null 2>&1; then
       echo "OK  ufw has a rule for port ${VNC_PORT}"
     else
       echo "WARN ufw is active but port ${VNC_PORT} may be blocked"
-      echo "      Run: sudo ./scripts/vnc_open_firewall.sh"
+      echo "      See: ./scripts/vnc_open_firewall.sh  (SSH tunnel or OVH Manager)"
       FAIL=1
     fi
   else
@@ -82,8 +82,8 @@ echo ""
 if [[ "${FAIL}" -eq 0 ]]; then
   IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
   echo "noVNC should work at: http://${IP:-<vps-ip>}:${VNC_PORT}/vnc.html  (password: vnc)"
-  echo "If the browser still fails from your PC, open port ${VNC_PORT} in OVH Manager → Network → Firewall"
-  echo "Or use SSH tunnel: ssh -L ${VNC_PORT}:127.0.0.1:${VNC_PORT} user@${IP:-94.23.210.145}"
+  echo "If the browser still fails from your PC, see: ./scripts/vnc_open_firewall.sh"
+  echo "  (SSH tunnel or OVH Manager firewall for port ${VNC_PORT})"
 else
   echo "noVNC is NOT ready. Fix the FAIL items above, then:"
   echo "  ./scripts/vnc_start.sh"

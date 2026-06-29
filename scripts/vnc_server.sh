@@ -11,7 +11,43 @@ export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
 mkdir -p "${XDG_RUNTIME_DIR}"
 chmod 700 "${XDG_RUNTIME_DIR}" || true
 
+VNC_PORT=5900
+WEB_PORT=7900
+
 _log() { echo "[vnc] $*"; }
+
+_port_open() {
+  local host="${1:?host}"
+  local port="${2:?port}"
+  if (echo >/dev/tcp/"${host}"/"${port}") 2>/dev/null; then
+    echo "open"
+  else
+    echo "closed"
+  fi
+}
+
+_wait_port() {
+  local host="${1:?host}"
+  local port="${2:?port}"
+  local tries="${3:-40}"
+  local i
+  for i in $(seq 1 "${tries}"); do
+    if [[ "$(_port_open "${host}" "${port}")" == "open" ]]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+_kill_vnc_listeners() {
+  pkill -9 -f '[w]ebsockify' 2>/dev/null || true
+  pkill -9 -f '[x]11vnc' 2>/dev/null || true
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${VNC_PORT}"/tcp "${WEB_PORT}"/tcp 2>/dev/null || true
+  fi
+  sleep 0.4
+}
 
 _start_xvfb() {
   if pgrep -x Xvfb >/dev/null 2>&1; then
@@ -51,27 +87,11 @@ _start_terminal() {
 
 _ensure_passfile() {
   mkdir -p /tmp/vnc
-  PASSFILE=/tmp/vnc/passwd
-  if [[ ! -f "${PASSFILE}" ]]; then
-    x11vnc -storepasswd "vnc" "${PASSFILE}" >/dev/null 2>&1
+  local passfile=/tmp/vnc/passwd
+  if [[ ! -f "${passfile}" ]]; then
+    x11vnc -storepasswd "vnc" "${passfile}" >/dev/null 2>&1
   fi
-  echo "${PASSFILE}"
-}
-
-_start_x11vnc() {
-  local passfile
-  passfile="$(_ensure_passfile)"
-  _log "starting x11vnc on port 5900"
-  x11vnc \
-    -display "${DISPLAY}" \
-    -rfbauth "${passfile}" \
-    -forever \
-    -shared \
-    -rfbport 5900 \
-    -listen 127.0.0.1 \
-    -noxdamage \
-    >/tmp/x11vnc.log 2>&1 &
-  echo $!
+  echo "${passfile}"
 }
 
 _find_novnc_web() {
@@ -85,72 +105,95 @@ _find_novnc_web() {
   return 1
 }
 
+_start_x11vnc() {
+  if [[ "$(_port_open 127.0.0.1 "${VNC_PORT}")" == "open" ]]; then
+    _log "port ${VNC_PORT} already open — skipping x11vnc start"
+    pgrep -f '[x]11vnc' | head -1
+    return 0
+  fi
+  local passfile pid
+  passfile="$(_ensure_passfile)"
+  _log "starting x11vnc on port ${VNC_PORT}"
+  x11vnc \
+    -display "${DISPLAY}" \
+    -rfbauth "${passfile}" \
+    -forever \
+    -shared \
+    -rfbport "${VNC_PORT}" \
+    -listen 127.0.0.1 \
+    -noxdamage \
+    >/tmp/x11vnc.log 2>&1 &
+  pid=$!
+  if ! _wait_port 127.0.0.1 "${VNC_PORT}" 30; then
+    _log "x11vnc did not open port ${VNC_PORT}"
+    tail -30 /tmp/x11vnc.log 2>/dev/null || true
+    return 1
+  fi
+  echo "${pid}"
+}
+
 _start_websockify() {
-  local novnc_web
+  if [[ "$(_port_open 127.0.0.1 "${WEB_PORT}")" == "open" ]]; then
+    _log "port ${WEB_PORT} already open — skipping websockify start"
+    pgrep -f '[w]ebsockify' | head -1
+    return 0
+  fi
+  local novnc_web pid
   novnc_web="$(_find_novnc_web)" || {
     _log "ERROR: vnc.html not found under /usr/share/novnc"
     return 1
   }
-  _log "starting websockify on 7900 -> 5900 (web=${novnc_web})"
-  websockify --web "${novnc_web}" 0.0.0.0:7900 localhost:5900 >/tmp/websockify.log 2>&1 &
-  echo $!
+  _log "starting websockify on ${WEB_PORT} -> ${VNC_PORT} (web=${novnc_web})"
+  websockify --web "${novnc_web}" "0.0.0.0:${WEB_PORT}" "localhost:${VNC_PORT}" \
+    >/tmp/websockify.log 2>&1 &
+  pid=$!
+  if ! _wait_port 127.0.0.1 "${WEB_PORT}" 30; then
+    _log "websockify did not open port ${WEB_PORT}"
+    tail -30 /tmp/websockify.log 2>/dev/null || true
+    return 1
+  fi
+  echo "${pid}"
 }
 
-_port_open() {
-  local host="${1:?host}"
-  local port="${2:?port}"
-  python - <<PY
-import socket
-host = ${host!r}
-port = int(${port!r})
-s = socket.socket()
-s.settimeout(0.5)
-try:
-  s.connect((host, port))
-  print("open")
-except Exception:
-  print("closed")
-finally:
-  s.close()
-PY
+_restart_x11vnc() {
+  pkill -9 -f '[x]11vnc' 2>/dev/null || true
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${VNC_PORT}"/tcp 2>/dev/null || true
+  fi
+  sleep 0.3
+  _start_x11vnc
 }
+
+_restart_websockify() {
+  pkill -9 -f '[w]ebsockify' 2>/dev/null || true
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k "${WEB_PORT}"/tcp 2>/dev/null || true
+  fi
+  sleep 0.3
+  _start_websockify
+}
+
+_kill_vnc_listeners
 
 _start_xvfb
 _start_fluxbox
 _start_terminal
 
-# Clean up any stray processes from previous starts.
-pkill -f "websockify.*0\\.0\\.0\\.0:7900" 2>/dev/null || true
-pkill -f "websockify.*:7900" 2>/dev/null || true
-pkill -f x11vnc 2>/dev/null || true
-sleep 0.4
+X11VNC_PID="$(_start_x11vnc)" || exit 1
+WEBSOCKIFY_PID="$(_start_websockify)" || exit 1
 
-X11VNC_PID="$(_start_x11vnc)"
-WEBSOCKIFY_PID="$(_start_websockify)" || {
-  _log "websockify failed to start"
-  tail -30 /tmp/websockify.log 2>/dev/null || true
-  exit 1
-}
-
-_log "noVNC: http://0.0.0.0:7900/vnc.html  (password: vnc)"
+_log "noVNC: http://0.0.0.0:${WEB_PORT}/vnc.html  (password: vnc)"
 
 while true; do
-  # If x11vnc died, websockify will fail with connection refused.
-  if ! kill -0 "${X11VNC_PID}" >/dev/null 2>&1; then
+  if ! kill -0 "${X11VNC_PID}" 2>/dev/null; then
     _log "x11vnc stopped; restarting (tail /tmp/x11vnc.log):"
-    tail -50 /tmp/x11vnc.log 2>/dev/null || true
-    X11VNC_PID="$(_start_x11vnc)"
+    tail -20 /tmp/x11vnc.log 2>/dev/null || true
+    X11VNC_PID="$(_restart_x11vnc)" || true
   fi
-  # Ensure the VNC port is reachable locally.
-  if [[ "$(_port_open 127.0.0.1 5900)" != "open" ]]; then
-    _log "port 5900 not reachable yet; waiting..."
-  fi
-  # If websockify died, restart it too.
-  if ! kill -0 "${WEBSOCKIFY_PID}" >/dev/null 2>&1; then
+  if ! kill -0 "${WEBSOCKIFY_PID}" 2>/dev/null; then
     _log "websockify stopped; restarting (tail /tmp/websockify.log):"
-    tail -50 /tmp/websockify.log 2>/dev/null || true
-    WEBSOCKIFY_PID="$(_start_websockify)"
+    tail -20 /tmp/websockify.log 2>/dev/null || true
+    WEBSOCKIFY_PID="$(_restart_websockify)" || true
   fi
-  sleep 1
+  sleep 2
 done
-

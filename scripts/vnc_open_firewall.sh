@@ -1,18 +1,13 @@
 #!/usr/bin/env bash
-# Open noVNC port (7900) on the OVH VPS firewall.
+# How to reach noVNC without root on the VPS (no ufw/sudo on this host).
 #
-#   sudo ./scripts/vnc_open_firewall.sh
-#   sudo ./scripts/vnc_open_firewall.sh --ip 197.5.129.6   # office IP only (safer)
+#   ./scripts/vnc_open_firewall.sh
+#   ./scripts/vnc_open_firewall.sh --ip 197.5.129.6
 #
-# Also check OVH Manager → Bare Metal / VPS → Network → Firewall if the port stays blocked.
+# This script only prints instructions. Firewall changes need OVH Manager or SSH tunnel.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
-
-if [[ "${EUID}" -ne 0 ]]; then
-  echo "Run with sudo: sudo $0 $*" >&2
-  exit 1
-fi
 
 _load_env() {
   if [[ -f "${ROOT}/.env" ]]; then
@@ -28,8 +23,6 @@ _load_env() {
     set +a
   fi
 }
-
-_log() { echo "[vnc-fw] $*"; }
 
 VNC_PORT="${VNC_PORT:-7900}"
 ALLOW_IP=""
@@ -47,34 +40,38 @@ done
 
 _load_env
 if [[ -z "${ALLOW_IP}" ]]; then
-  ALLOW_IP="${SSH_ALLOWED_IP_NEW:-${SSH_ALLOWED_IP_OLD:-}}"
+  ALLOW_IP="${SSH_ALLOWED_IP_NEW:-${SSH_ALLOWED_IP_OLD:-197.5.129.6}}"
 fi
 
-if command -v ufw >/dev/null 2>&1; then
-  if [[ -n "${ALLOW_IP}" ]]; then
-    if ufw status 2>/dev/null | grep -qF "${ALLOW_IP}"; then
-      _log "ufw: rule for ${ALLOW_IP} may already exist"
-    fi
-    ufw allow from "${ALLOW_IP}" to any port "${VNC_PORT}" proto tcp \
-      comment "rapport_seo noVNC"
-    _log "ufw: allowed ${ALLOW_IP} -> tcp/${VNC_PORT}"
-  else
-    ufw allow "${VNC_PORT}"/tcp comment "rapport_seo noVNC"
-    _log "ufw: allowed tcp/${VNC_PORT} from anywhere (use --ip for restrict)"
-  fi
-  ufw reload 2>/dev/null || true
-  ufw status | grep -E "Status:|${VNC_PORT}" || ufw status
-else
-  _log "ufw not found — opening with iptables"
-  if [[ -n "${ALLOW_IP}" ]]; then
-    iptables -C INPUT -s "${ALLOW_IP}" -p tcp --dport "${VNC_PORT}" -j ACCEPT 2>/dev/null \
-      || iptables -I INPUT -s "${ALLOW_IP}" -p tcp --dport "${VNC_PORT}" -j ACCEPT
-  else
-    iptables -C INPUT -p tcp --dport "${VNC_PORT}" -j ACCEPT 2>/dev/null \
-      || iptables -I INPUT -p tcp --dport "${VNC_PORT}" -j ACCEPT
-  fi
-  _log "Persist: apt install iptables-persistent && netfilter-persistent save"
-fi
+SERVER_IP="${OVH_SERVER_IP:-$(hostname -I 2>/dev/null | awk '{print $1}')}"
 
-_log "Done. Test: ./scripts/vnc_health.sh"
-_log "OVH network firewall: allow TCP ${VNC_PORT} in the manager if still blocked externally"
+cat <<EOF
+=== noVNC access (no root / no ufw on this server) ===
+
+Recommended — SSH tunnel from your PC (uses port 22 only, keeps ${ALLOW_IP} safe):
+
+  ssh -L ${VNC_PORT}:127.0.0.1:${VNC_PORT} \$(whoami)@${SERVER_IP}
+
+Then open in your browser:
+
+  http://localhost:${VNC_PORT}/vnc.html
+
+Password: vnc
+
+---
+
+Alternative — open port ${VNC_PORT} in OVH Manager (no shell root needed):
+
+  1. OVH Manager → your server → Network → Firewall
+  2. Add rule: TCP ${VNC_PORT} from ${ALLOW_IP} only
+  3. Keep existing SSH rule: TCP 22 from ${ALLOW_IP}
+  4. Then open: http://${SERVER_IP}:${VNC_PORT}/vnc.html
+
+---
+
+Check noVNC inside Docker first:
+
+  ./scripts/vnc_start.sh
+  ./scripts/vnc_health.sh
+
+EOF

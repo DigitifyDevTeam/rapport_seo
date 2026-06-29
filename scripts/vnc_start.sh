@@ -4,11 +4,12 @@
 #   ./scripts/vnc_start.sh
 #
 # Open: http://<vps-ip>:7900/vnc.html   password: vnc
-# Then in the xterm window (or SSH exec):
-#   python scripts/gmb_ui_prepare_shared_account.py --skip-master
+# Or SSH tunnel (no extra firewall port): see ./scripts/vnc_open_firewall.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
+
+chmod +x scripts/vnc_*.sh scripts/gmb_ui_prepare_vnc*.sh 2>/dev/null || true
 
 echo "Building image if needed..."
 docker compose build seo-reports
@@ -18,10 +19,9 @@ docker compose --profile tools stop seo-vnc 2>/dev/null || true
 docker compose --profile tools rm -f seo-vnc 2>/dev/null || true
 
 echo "Starting seo-vnc (noVNC on port 7900)..."
-docker compose --profile tools up -d --no-recreate seo-vnc 2>/dev/null \
-  || docker compose --profile tools up -d seo-vnc
+docker compose --profile tools up -d --force-recreate seo-vnc
 
-sleep 3
+sleep 4
 if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo ""
   if bash "${ROOT}/scripts/vnc_health.sh"; then
@@ -31,9 +31,9 @@ if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
     echo ""
     echo "Container is Up but noVNC is not reachable yet."
     echo "  docker compose --profile tools logs --tail 80 seo-vnc"
-    echo "  sudo ./scripts/vnc_open_firewall.sh"
+    echo "  ./scripts/vnc_open_firewall.sh"
     echo ""
-    echo "SSH tunnel workaround (from your PC):"
+    echo "SSH tunnel from your PC (no extra firewall port):"
     echo "  ssh -L 7900:127.0.0.1:7900 $(whoami)@$(hostname -I 2>/dev/null | awk '{print $1}')"
     echo "  Then open: http://localhost:7900/vnc.html"
     exit 1
@@ -41,14 +41,12 @@ if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo "  URL:      http://$(hostname -I 2>/dev/null | awk '{print $1}'):7900/vnc.html"
   echo "  Password: vnc"
   echo ""
+  echo "If the URL fails from your PC, use SSH tunnel: ./scripts/vnc_open_firewall.sh"
+  echo ""
   echo "Run GMB prepare (reuse DeepCleaning login):"
   echo "  ./scripts/gmb_ui_prepare_vnc_client.sh origincbd"
   echo "  ./scripts/gmb_ui_prepare_vnc_client.sh digitify"
   echo "  ./scripts/gmb_ui_prepare_vnc.sh --skip-master"
-  echo ""
-  echo "Or manually:"
-  echo "  docker compose --profile tools exec -it -e DISPLAY=:0 seo-vnc \\"
-  echo "    python scripts/gmb_ui_prepare_shared_account.py --skip-master --clients origincbd"
   echo ""
   echo "Logs: docker compose --profile tools logs -f seo-vnc"
 else
