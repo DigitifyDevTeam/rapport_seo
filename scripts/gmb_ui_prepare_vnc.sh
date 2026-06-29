@@ -4,7 +4,9 @@
 #   bash scripts/gmb_ui_prepare_vnc.sh
 #   bash scripts/gmb_ui_prepare_vnc.sh --skip-master
 #
-# Starts noVNC if needed → http://<vps-ip>:7900/vnc.html  password: vnc
+# Manual shell (same as before):
+#   bash scripts/gmb_vnc_shell.sh
+#   python scripts/clients/deepcleaning/gmb_ui_prepare.py
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
@@ -27,15 +29,19 @@ echo "Open noVNC in your browser (password: vnc):"
 echo "  http://<your-vps-ip>:7900/vnc.html"
 echo ""
 echo "VPS Chrome profile: ${VPS_PROFILE}"
-echo "(Fresh Google login on the server — ignore Windows session cookies.)"
 echo ""
-echo "Unlocking Chrome profiles and starting GMB prepare..."
+echo "Unlocking Chrome profiles..."
 docker compose --profile tools exec -T seo-vnc \
   bash /app/scripts/gmb_unlock_chrome_profiles.sh
+mkdir -p "${ROOT}/outputs/_sessions/chrome-profile-gmb-vps" 2>/dev/null || true
+
+echo "Starting GMB prepare..."
 docker compose --profile tools exec -it \
   -e DISPLAY="${VNC_DISPLAY}" \
+  -e PYTHONPATH=/app \
   -e SEO_REPORT_VNC=1 \
   -e SEO_REPORT_GMB_PROFILE="${VPS_PROFILE}" \
   -e DBUS_SESSION_BUS_ADDRESS=/dev/null \
+  -w /app \
   seo-vnc \
   python scripts/gmb_ui_prepare_shared_account.py "$@"

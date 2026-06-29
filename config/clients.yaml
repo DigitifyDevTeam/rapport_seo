@@ -76,7 +76,7 @@ clients:
         - "Digitify.fr"
         - "digitify.fr"
     clarity:
-      project_id: "k23l3ye7zj"
+      project_id: "wck8kvahx2"
       ui_skip_widgets:
         - popular_products
       pptx_hide_popular_products: true
