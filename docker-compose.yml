@@ -44,18 +44,18 @@ services:
     entrypoint: ["/app/docker-entrypoint.sh"]
 
   # Browser UI on the VPS (noVNC). Use ONLY for one-time manual login flows.
-  # Connect: http://<vps-ip>:7900  (password: vnc)
+  # Host network avoids Docker iptables DNAT (broken on some OVH hosts without root).
+  # Connect: http://127.0.0.1:7900/vnc.html on the server, or SSH tunnel from your PC.
   seo-vnc:
     profiles:
       - tools
     image: rapport-seo:latest
+    network_mode: host
     working_dir: /app
     env_file:
       - .env
     environment:
       - DISPLAY=:0
-    ports:
-      - "7900:7900"
     restart: unless-stopped
     volumes:
       - ./.env:/app/.env:ro

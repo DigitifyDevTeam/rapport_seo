@@ -18,15 +18,19 @@ fi
 echo ""
 echo "=== Docker port publish (host) ==="
 if command -v ss >/dev/null 2>&1; then
-  ss -tlnp 2>/dev/null | grep -E ":${VNC_PORT}\\b" || {
-    echo "FAIL nothing listening on 0.0.0.0:${VNC_PORT} on the host"
+  if ss -tlnp 2>/dev/null | grep -E ":${VNC_PORT}\\b"; then
+    echo "OK  process listening on port ${VNC_PORT}"
+  else
+    echo "FAIL nothing listening on port ${VNC_PORT} on the host"
     FAIL=1
-  }
+  fi
 elif command -v netstat >/dev/null 2>&1; then
-  netstat -tlnp 2>/dev/null | grep -E ":${VNC_PORT}\\b" || {
-    echo "FAIL nothing listening on :${VNC_PORT} on the host"
+  if netstat -tlnp 2>/dev/null | grep -E ":${VNC_PORT}\\b"; then
+    echo "OK  process listening on port ${VNC_PORT}"
+  else
+    echo "FAIL nothing listening on port :${VNC_PORT} on the host"
     FAIL=1
-  }
+  fi
 else
   echo "SKIP ss/netstat not found"
 fi

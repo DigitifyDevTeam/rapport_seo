@@ -18,8 +18,14 @@ echo "Stopping old seo-vnc container (if any)..."
 docker compose --profile tools stop seo-vnc 2>/dev/null || true
 docker compose --profile tools rm -f seo-vnc 2>/dev/null || true
 
-echo "Starting seo-vnc (noVNC on port 7900)..."
-docker compose --profile tools up -d --force-recreate seo-vnc
+echo "Starting seo-vnc (noVNC on port 7900, host network)..."
+if ! docker compose --profile tools up -d --force-recreate seo-vnc 2>&1; then
+  echo ""
+  echo "seo-vnc failed to start."
+  echo "If you see 'iptables: No chain/target/match', pull latest code (host network fix)"
+  echo "or ask your host admin to restart Docker: systemctl restart docker"
+  exit 1
+fi
 
 sleep 4
 if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
