@@ -64,10 +64,10 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v5-hidpi-screenshots"
+GMB_UI_CAPTURE_VERSION = "calmonth-v6-hidpi3x-screenshots"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
-CLARITY_UI_CAPTURE_VERSION = "hidpi-v1"
+CLARITY_UI_CAPTURE_VERSION = "hidpi-v2"
 
 
 @dataclass

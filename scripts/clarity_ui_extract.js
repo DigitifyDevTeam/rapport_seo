@@ -26,14 +26,15 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const readline = require("readline");
+const { spawnSync } = require("child_process");
 const puppeteer = require("puppeteer");
 
-// Hi-DPI captures (2×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v1";
+// Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v2";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
-  deviceScaleFactor: 2,
+  deviceScaleFactor: 3,
 };
 
 /** Always store absolute paths in clarity_ui.json (Docker cwd = /app). */
@@ -955,6 +956,28 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   return card;
 }
 
+function enhanceCapturedPngs(outDir) {
+  const py = process.env.PYTHON || "python";
+  const projectRoot = path.resolve(__dirname, "..");
+  const result = spawnSync(
+    py,
+    [
+      "-m",
+      "src.reporting.screenshot_enhance",
+      outDir,
+      "--pattern",
+      "clarity_card_*.png",
+    ],
+    { cwd: projectRoot, encoding: "utf-8" },
+  );
+  if (result.stdout) {
+    console.log(result.stdout.trim());
+  }
+  if (result.status !== 0 && result.stderr) {
+    console.warn(`[enhance] ${result.stderr.trim()}`);
+  }
+}
+
 async function screenshotPreparedCard(page, target, card, outPath) {
   if (!card) return null;
   await dismissMenus(page);
@@ -963,7 +986,7 @@ async function screenshotPreparedCard(page, target, card, outPath) {
     fs.unlinkSync(outPath);
   }
   try {
-    await card.screenshot({ path: outPath });
+    await card.screenshot({ path: outPath, type: "png" });
   } catch (err) {
     console.warn(`[card:${target.id}] element screenshot failed: ${err.message}`);
     return null;
@@ -1172,7 +1195,7 @@ async function captureKpiStripScreenshot(page, labels, outPath) {
 
   if (!clip) return null;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
-  await page.screenshot({ path: outPath, clip });
+  await page.screenshot({ path: outPath, clip, type: "png" });
   return outPath;
 }
 
@@ -1506,7 +1529,7 @@ async function main() {
 
   if (screenshot) {
     fs.mkdirSync(path.dirname(path.resolve(screenshot)), { recursive: true });
-    await page.screenshot({ path: path.resolve(screenshot), fullPage: true });
+    await page.screenshot({ path: path.resolve(screenshot), fullPage: true, type: "png" });
   }
 
   const charts = {};
@@ -1536,6 +1559,8 @@ async function main() {
     );
     Object.assign(charts, autoCharts);
   }
+
+  enhanceCapturedPngs(path.dirname(outPath));
 
   const payload = {
     captured_at: new Date().toISOString(),

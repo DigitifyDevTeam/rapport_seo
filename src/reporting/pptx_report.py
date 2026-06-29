@@ -181,7 +181,8 @@ class ReportBuilder:
         if len(placeholders) == 1:
             name = placeholders[0]
             if name.startswith("chart_"):
-                self._replace_with_image(slide, shape, data.get(name))
+                self._replace_with_image(slide, shape, data.get(name),
+                                         placeholder_name=name)
                 return
             if name == "table_organic_performance":
                 self._replace_organic_performance(slide, shape, data.get(name))
@@ -309,7 +310,8 @@ class ReportBuilder:
         slide.shapes._spTree.remove(shape._element)  # noqa: SLF001
         add_organic_performance_table(slide, left, top, width, height, payload)
 
-    def _replace_with_image(self, slide, shape, image_path: Any) -> None:
+    def _replace_with_image(self, slide, shape, image_path: Any, *,
+                            placeholder_name: str = "") -> None:
         if not image_path:
             return
         path = Path(image_path)
@@ -323,8 +325,27 @@ class ReportBuilder:
             left, top, width, height, path,
             margin_ratio=_PICTURE_MARGIN_RATIO,
         )
-        slide.shapes.add_picture(str(path), fit_left, fit_top,
-                                   width=fit_w, height=fit_h)
+        picture_path = path
+        enhanced_path: Path | None = None
+        if placeholder_name.startswith(("chart_gmb_", "chart_clarity_")):
+            try:
+                from src.reporting.screenshot_enhance import prepare_slide_image
+
+                enhanced_path = prepare_slide_image(
+                    path, fit_w, fit_h, placeholder_name=placeholder_name,
+                )
+                picture_path = enhanced_path
+            except Exception as exc:
+                logger.warning("screenshot enhance failed for %s: %s", path, exc)
+        try:
+            slide.shapes.add_picture(str(picture_path), fit_left, fit_top,
+                                       width=fit_w, height=fit_h)
+        finally:
+            if enhanced_path is not None and enhanced_path != path:
+                try:
+                    enhanced_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _replace_with_table(self, slide, shape, df: Any,
                              table_name: str | None = None) -> None:

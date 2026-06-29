@@ -14,7 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "scripts" / "gmb_ui_extract.py"
 SESSION = ROOT / "outputs" / "_sessions" / "gmb-digitify.json"
-PROFILE = ROOT / "outputs" / "_sessions" / "chrome-profile-gmb"
 
 
 def _period_bounds(month: str) -> tuple[str, str]:
@@ -41,7 +40,7 @@ def main() -> int:
         "--out", str(out_dir / "gmb_ui.json"),
         "--screenshot", str(out_dir / "gmb_dashboard.png"),
         "--project-name", "Digitify",
-        "--profile", str(PROFILE),
+        "--channel", "chromium",
         "--manual",
         "--manual-skip-period",
         "--no-auto-period",

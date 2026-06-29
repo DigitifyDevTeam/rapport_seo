@@ -7,6 +7,10 @@
 #     ./scripts/import_gmb_sessions.sh perf origincbd ~/gmb-performance-origincbd.txt
 #     ./scripts/import_gmb_sessions.sh perf digitify ~/gmb-performance-digitify.txt
 #
+# Copy Origincbd login to Digitify (cookies only, not Origincbd KPIs):
+#     ./scripts/import_gmb_sessions.sh auth digitify origincbd
+#     ./scripts/bootstrap_gmb_digitify_from_origincbd.sh
+#
 # Do NOT import gmb-origincbd.json / gmb-digitify.json unless you need a dedicated session
 # (those files block shared-session fallback). Remove stale copies on the VPS if present.
 #
@@ -89,6 +93,19 @@ if [[ -z "${CLIENT}" ]]; then
   echo "   or: $0 perf <client_id> <path-to-gmb-performance-CLIENT.txt>" >&2
   echo "   or: $0 all <directory-with-gmb-*.json>" >&2
   exit 1
+fi
+
+if [[ "${CLIENT}" == "auth" ]]; then
+  TARGET="${SRC:-}"
+  SOURCE="${3:-}"
+  if [[ -z "${TARGET}" || -z "${SOURCE}" ]]; then
+    echo "Usage: $0 auth <target_client> <source_client>" >&2
+    echo "Example: $0 auth digitify origincbd" >&2
+    exit 1
+  fi
+  docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
+    python scripts/gmb_copy_session_auth.py --from "${SOURCE}" --to "${TARGET}"
+  exit 0
 fi
 
 if [[ "${CLIENT}" == "perf" ]]; then

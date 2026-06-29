@@ -68,11 +68,11 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v5-hidpi-screenshots"
+GMB_UI_CAPTURE_VERSION = "calmonth-v6-hidpi3x-screenshots"
 
 # Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
 _BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
-_BROWSER_DEVICE_SCALE_FACTOR = 2
+_BROWSER_DEVICE_SCALE_FACTOR = 3
 
 DATE_PRESET_LABELS = [
     "Mois précédent", "Mois dernier", "Le mois dernier",
@@ -609,11 +609,28 @@ def _validate_saved_public_fiche(out_path: Path) -> bool:
     return is_valid_public_fiche_png(out_path)
 
 
+def _enhance_saved_screenshot(out_path: Path) -> None:
+    """Sharpen a saved GMB UI PNG for clearer slides."""
+    if not out_path.is_file():
+        return
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    try:
+        from src.reporting.screenshot_enhance import enhance_ui_screenshot
+
+        enhance_ui_screenshot(out_path)
+    except Exception as exc:
+        _log(f"enhance: {out_path.name}: {exc}")
+
+
 def _screenshot_clip(page: Page, out_path: Path, clip: dict[str, float]) -> bool:
     if clip.get("width", 0) < 280:
         return False
     try:
-        page.screenshot(path=str(out_path), clip=clip)
+        page.screenshot(path=str(out_path), clip=clip, type="png")
+        if out_path.is_file():
+            _enhance_saved_screenshot(out_path)
         return out_path.is_file()
     except Exception as exc:
         _log(f"public fiche: screenshot failed: {exc}")
@@ -1951,6 +1968,13 @@ def _owner_page(target: Page | Frame) -> Page:
     return target
 
 
+def _finalize_screenshot(out_path: Path) -> bool:
+    if not out_path.is_file():
+        return False
+    _enhance_saved_screenshot(out_path)
+    return True
+
+
 def _screenshot_performance_card(target: Page | Frame, out_path: Path) -> bool:
     """Save the chart card PNG (Playwright ElementHandle has no ``clip`` arg)."""
     page = _owner_page(target)
@@ -1974,19 +1998,20 @@ def _screenshot_performance_card(target: Page | Frame, out_path: Path) -> bool:
                         "height": clip["height"],
                     }
                     page.screenshot(path=str(out_path), clip=abs_clip,
-                                    timeout=15_000)
-                    return out_path.is_file()
-            page.screenshot(path=str(out_path), clip=clip, timeout=15_000)
-            return out_path.is_file()
+                                    timeout=15_000, type="png")
+                    return _finalize_screenshot(out_path)
+            page.screenshot(path=str(out_path), clip=clip, timeout=15_000,
+                            type="png")
+            return _finalize_screenshot(out_path)
         except Exception as exc:
             _log(f"screenshot: page clip failed: {exc}")
 
     try:
         if target.evaluate(JS_TAG_MODAL_CONTENT):
             target.locator('[data-gmb-capture="1"]').first.screenshot(
-                path=str(out_path), timeout=15_000,
+                path=str(out_path), timeout=15_000, type="png",
             )
-            if out_path.is_file():
+            if _finalize_screenshot(out_path):
                 return True
     except Exception as exc:
         _log(f"screenshot: modal content failed: {exc}")
@@ -1994,19 +2019,21 @@ def _screenshot_performance_card(target: Page | Frame, out_path: Path) -> bool:
     try:
         target.evaluate(JS_FIND_MODAL)
         target.locator('[data-gmb-modal="1"]').first.screenshot(
-            path=str(out_path), timeout=15_000,
+            path=str(out_path), timeout=15_000, type="png",
         )
-        if out_path.is_file():
+        if _finalize_screenshot(out_path):
             return True
     except Exception as exc:
         _log(f"screenshot: modal panel failed: {exc}")
 
     try:
         if isinstance(target, Frame):
-            target.frame_element().screenshot(path=str(out_path), timeout=15_000)
+            target.frame_element().screenshot(path=str(out_path), timeout=15_000,
+                                              type="png")
         else:
-            page.screenshot(path=str(out_path), full_page=False, timeout=15_000)
-        return out_path.is_file()
+            page.screenshot(path=str(out_path), full_page=False, timeout=15_000,
+                            type="png")
+        return _finalize_screenshot(out_path)
     except Exception as exc:
         _log(f"screenshot: fallback failed: {exc}")
         return False

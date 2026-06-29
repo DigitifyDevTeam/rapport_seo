@@ -63,10 +63,10 @@ async function main() {
   // Reload with storage applied.
   await page.goto(url, { waitUntil: "networkidle2" });
 
-  await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 2 });
+  await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 3 });
   await page.waitForTimeout(1500);
 
-  await page.screenshot({ path: outPath, fullPage: true });
+  await page.screenshot({ path: outPath, fullPage: true, type: "png" });
   console.log(`Wrote ${outPath}`);
 
   await browser.close();
