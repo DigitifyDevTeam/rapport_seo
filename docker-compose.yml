@@ -21,6 +21,7 @@ services:
     # Headless Chromium (Playwright + Puppeteer)
     environment:
       - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - PYTHONPATH=/app
 
   # Interactive shell for one-time logins (GMB / Clarity sessions)
   seo-tools:

@@ -48,6 +48,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
 from playwright.sync_api import (Frame, Page,
                                   TimeoutError as PlaywrightTimeoutError,
                                   sync_playwright)
