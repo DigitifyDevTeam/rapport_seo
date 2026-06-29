@@ -19,13 +19,15 @@ _start_xvfb() {
   fi
   _log "starting Xvfb on ${DISPLAY}"
   Xvfb "${DISPLAY}" -screen 0 1440x900x24 -ac +extension RANDR >/tmp/xvfb.log 2>&1 &
-  for _ in $(seq 1 40); do
+  local i
+  for i in $(seq 1 40); do
     if xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
   done
   _log "Xvfb did not become ready; see /tmp/xvfb.log"
+  tail -20 /tmp/xvfb.log 2>/dev/null || true
   return 1
 }
 
@@ -72,13 +74,25 @@ _start_x11vnc() {
   echo $!
 }
 
+_find_novnc_web() {
+  local candidate
+  for candidate in /usr/share/novnc /usr/share/novnc/www /usr/share/nodejs/novnc; do
+    if [[ -f "${candidate}/vnc.html" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 _start_websockify() {
-  NOVNC_WEB=/usr/share/novnc
-  if [[ ! -d "${NOVNC_WEB}" ]]; then
-    NOVNC_WEB=/usr/share/novnc/www
-  fi
-  _log "starting websockify on 7900 -> 5900"
-  websockify --web "${NOVNC_WEB}" 0.0.0.0:7900 localhost:5900 >/tmp/websockify.log 2>&1 &
+  local novnc_web
+  novnc_web="$(_find_novnc_web)" || {
+    _log "ERROR: vnc.html not found under /usr/share/novnc"
+    return 1
+  }
+  _log "starting websockify on 7900 -> 5900 (web=${novnc_web})"
+  websockify --web "${novnc_web}" 0.0.0.0:7900 localhost:5900 >/tmp/websockify.log 2>&1 &
   echo $!
 }
 
@@ -112,7 +126,11 @@ pkill -f x11vnc 2>/dev/null || true
 sleep 0.4
 
 X11VNC_PID="$(_start_x11vnc)"
-WEBSOCKIFY_PID="$(_start_websockify)"
+WEBSOCKIFY_PID="$(_start_websockify)" || {
+  _log "websockify failed to start"
+  tail -30 /tmp/websockify.log 2>/dev/null || true
+  exit 1
+}
 
 _log "noVNC: http://0.0.0.0:7900/vnc.html  (password: vnc)"
 

@@ -21,10 +21,23 @@ echo "Starting seo-vnc (noVNC on port 7900)..."
 docker compose --profile tools up -d --no-recreate seo-vnc 2>/dev/null \
   || docker compose --profile tools up -d seo-vnc
 
-sleep 2
+sleep 3
 if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo ""
-  echo "noVNC is running."
+  if bash "${ROOT}/scripts/vnc_health.sh"; then
+    echo ""
+    echo "noVNC is ready."
+  else
+    echo ""
+    echo "Container is Up but noVNC is not reachable yet."
+    echo "  docker compose --profile tools logs --tail 80 seo-vnc"
+    echo "  sudo ./scripts/vnc_open_firewall.sh"
+    echo ""
+    echo "SSH tunnel workaround (from your PC):"
+    echo "  ssh -L 7900:127.0.0.1:7900 $(whoami)@$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo "  Then open: http://localhost:7900/vnc.html"
+    exit 1
+  fi
   echo "  URL:      http://$(hostname -I 2>/dev/null | awk '{print $1}'):7900/vnc.html"
   echo "  Password: vnc"
   echo ""

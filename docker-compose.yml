@@ -56,6 +56,7 @@ services:
       - DISPLAY=:0
     ports:
       - "7900:7900"
+    restart: unless-stopped
     volumes:
       - ./.env:/app/.env:ro
       - ./secrets:/app/secrets
