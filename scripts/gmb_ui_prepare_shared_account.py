@@ -1,4 +1,4 @@
-"""One Google login for DeepCleaning, Origincbd, and Digitify GMB sessions.
+"""One Google login for DeepCleaning, Origincbd, Digitify, and Guivarche GMB sessions.
 
 Same Google account: save cookies once in ``gmb-deepcleaning.json``, then capture
 each brand's Performance URL (``#mpd=``) into ``gmb-performance-<client>.txt``.
@@ -17,8 +17,9 @@ Copy to the server::
     outputs/_sessions/gmb-deepcleaning.json
     outputs/_sessions/gmb-performance-origincbd.txt
     outputs/_sessions/gmb-performance-digitify.txt
+    outputs/_sessions/gmb-performance-guivarche.txt
 
-Do **not** upload ``gmb-origincbd.json`` / ``gmb-digitify.json`` unless you want a
+Do **not** upload ``gmb-origincbd.json`` / ``gmb-digitify.json`` / ``gmb-guivarche.json`` unless you want a
 dedicated session (they block shared-session fallback).
 """
 
@@ -33,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SESSIONS = ROOT / "outputs" / "_sessions"
 
 MASTER_CLIENT = "deepcleaning"
-PERF_URL_CLIENTS = ("origincbd", "digitify")
+PERF_URL_CLIENTS = ("origincbd", "digitify", "guivarche")
 DEFAULT_CLIENTS = (MASTER_CLIENT, *PERF_URL_CLIENTS)
 
 
@@ -47,7 +48,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--clients",
         default=",".join(DEFAULT_CLIENTS),
-        help="Comma-separated client ids (default: deepcleaning,origincbd,digitify).",
+        help="Comma-separated client ids (default: deepcleaning,origincbd,digitify,guivarche).",
     )
     parser.add_argument(
         "--no-check",
@@ -87,20 +88,26 @@ def main() -> int:
             return rc
     elif args.skip_master:
         master_json = SESSIONS / f"gmb-{MASTER_CLIENT}.json"
+        perf_only = MASTER_CLIENT not in clients and any(
+            c in clients for c in PERF_URL_CLIENTS
+        )
         if not master_json.is_file():
-            print(f"Missing {master_json}", file=sys.stderr)
-            print(
-                "Shared-account clients (origincbd, digitify) need the master login first:",
-                file=sys.stderr,
-            )
-            print(
-                "  bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning",
-                file=sys.stderr,
-            )
-            print("Or full flow (all clients):", file=sys.stderr)
-            print("  bash scripts/gmb_ui_prepare_vnc.sh", file=sys.stderr)
-            return 1
-        print(f"Using existing {master_json.name}")
+            if perf_only:
+                print(
+                    f"Note: {master_json.name} missing — continuing (browser login via VPS profile).",
+                )
+                print(
+                    "Run deepcleaning prepare later so monthly reports have saved cookies.",
+                )
+            else:
+                print(f"Missing {master_json}", file=sys.stderr)
+                print(
+                    "Run: bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning",
+                    file=sys.stderr,
+                )
+                return 1
+        elif master_json.is_file():
+            print(f"Using existing {master_json.name}")
 
     for client_id in PERF_URL_CLIENTS:
         if client_id not in clients:

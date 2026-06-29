@@ -7,6 +7,7 @@
 #   python -m src.pipeline.run_monthly --client deepcleaning --month 2026-04
 #   python -m src.pipeline.run_monthly --client origincbd --month 2026-03
 #   python -m src.pipeline.run_monthly --client digitify --month 2026-04
+#   python -m src.pipeline.run_monthly --client guivarche --month 2026-05
 #   python -m src.pipeline.run_monthly --client cchabitat --month 2026-04
 
 defaults:
@@ -77,6 +78,40 @@ clients:
         - "digitify.fr"
     clarity:
       project_id: "wck8kvahx2"
+      ui_skip_widgets:
+        - popular_products
+      pptx_hide_popular_products: true
+    delivery:
+      emails: []
+
+  - id: guivarche
+    name: Guivarche Déménagement
+    website: https://guivarche-demenagement.fr
+    report_profile:
+      client: Guivarche
+      activity: Déménagement & services associés
+      site_name: Guivarche
+      url: https://guivarche-demenagement.fr/
+      seo_pack: Pack PRO +
+      seo_since: "—"
+    ga4:
+      property_id: "395375607"
+      organic_channel: "Organic Search"
+      ui_charts_dir: scripts/clients/guivarche/ga4_assets
+    gsc:
+      site_url: "https://guivarche-demenagement.fr/"
+    gmb:
+      account_id: ""
+      location_id: ""
+      ui_session_client: deepcleaning
+      ui_prefer_gmb_app: true
+      ui_project_name: "Guivarche"
+      ui_search_query: "Guivarche déménagement"
+      ui_project_aliases:
+        - "Guivarche"
+        - "guivarche-demenagement.fr"
+    clarity:
+      project_id: "k23l3ye7zj"
       ui_skip_widgets:
         - popular_products
       pptx_hide_popular_products: true

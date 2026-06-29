@@ -29,6 +29,7 @@ $searchQ = switch ($Client) {
     "origincbd" { "Origine+CBD+Paris" }
     "deepcleaning" { "Deep+Cleaning+Lavage+nettoyage+Colombes" }
     "digitify" { "Digitify+agence+web+Lyon" }
+    "guivarche" { "Guivarche+demenagement" }
     "cchabitat" { "Concept+Confort+Habitat" }
     default { $Client }
 }

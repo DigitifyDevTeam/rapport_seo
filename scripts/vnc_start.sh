@@ -53,6 +53,7 @@ if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo "Run GMB prepare (reuse DeepCleaning login):"
   echo "  ./scripts/gmb_ui_prepare_vnc_client.sh origincbd"
   echo "  ./scripts/gmb_ui_prepare_vnc_client.sh digitify"
+  echo "  ./scripts/gmb_ui_prepare_vnc_client.sh guivarche"
   echo "  ./scripts/gmb_ui_prepare_vnc.sh --skip-master"
   echo ""
   echo "Logs: docker compose --profile tools logs -f seo-vnc"

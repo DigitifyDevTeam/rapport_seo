@@ -63,6 +63,14 @@ def main() -> int:
         print(f"Run: python scripts/clients/{args.client_id}/gmb_ui_prepare.py")
         return 1
 
+    if args.show:
+        print(f"\n=== {args.client_id} — GMB Performance URL ===")
+        print("1) Chrome opens in noVNC.")
+        print("2) Sign in with your Google account if asked.")
+        print(f"3) Open Performances for {project!r}.")
+        print("4) Press ENTER in this terminal when the Performance page is visible.")
+        print("")
+
     profile = _profile_for_client(args.client_id)
     browser_args = docker_chromium_args()
     out: Path | None = None

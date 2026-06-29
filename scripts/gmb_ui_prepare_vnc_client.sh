@@ -1,36 +1,37 @@
 #!/usr/bin/env bash
-# GMB prepare for one client on the VPS (noVNC + shared Google account).
+# GMB prepare for one client on the VPS (noVNC). Opens Chrome in noVNC.
 #
-# Order matters for origincbd / digitify (same Google account as deepcleaning):
-#   1) bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning   # login once → gmb-deepcleaning.json
-#   2) bash scripts/gmb_ui_prepare_vnc_client.sh origincbd      # Performance URL only
-#   3) bash scripts/gmb_ui_prepare_vnc_client.sh digitify       # Performance URL only
+#   bash scripts/gmb_ui_prepare_vnc_client.sh deepcleaning   # login → gmb-deepcleaning.json
+#   bash scripts/gmb_ui_prepare_vnc_client.sh digitify       # Performance URL only (browser opens)
+#   bash scripts/gmb_ui_prepare_vnc_client.sh origincbd
 #
-# Equivalent (inside docker, same env as gmb_ui_prepare_vnc.sh):
-#   bash scripts/gmb_ui_prepare_vnc.sh --clients deepcleaning
-#   bash scripts/gmb_ui_prepare_vnc.sh --skip-master --clients digitify
+# For monthly reports you need gmb-deepcleaning.json (run deepcleaning once) plus each
+# client's gmb-performance-<client>.txt.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "${ROOT}"
+# shellcheck source=scripts/gmb_vnc_common.sh
+source "${ROOT}/scripts/gmb_vnc_common.sh"
 
-CLIENT="${1:?Usage: $0 <client_id>  e.g. origincbd}"
+CLIENT="${1:?Usage: $0 <client_id>  e.g. deepcleaning, digitify, origincbd}"
 shift || true
 
 case "${CLIENT}" in
   deepcleaning)
-  exec bash "${ROOT}/scripts/gmb_ui_prepare_vnc.sh" --clients deepcleaning "$@"
+    gmb_vnc_warn_missing_master
+    echo "Starting DeepCleaning login (saves gmb-deepcleaning.json)..."
+    gmb_vnc_python scripts/gmb_ui_prepare_shared_account.py --clients deepcleaning "$@"
     ;;
-  origincbd|digitify)
-  exec bash "${ROOT}/scripts/gmb_ui_prepare_vnc.sh" \
-    --skip-master --clients "${CLIENT}" "$@"
+  origincbd|digitify|guivarche)
+    gmb_vnc_warn_missing_master
+    echo "Opening browser for ${CLIENT} Performance URL..."
+    gmb_vnc_python scripts/capture_gmb_performance_url.py "${CLIENT}" --show
     ;;
   *)
     echo "Unknown client: ${CLIENT}" >&2
-    echo "Shared-account clients: deepcleaning, origincbd, digitify" >&2
+    echo "Shared-account clients: deepcleaning, origincbd, digitify, guivarche" >&2
     echo "For cchabitat (separate Google account):" >&2
-    echo "  ./scripts/vnc_start.sh" >&2
-    echo "  docker compose --profile tools exec -it -e DISPLAY=:99 -e PYTHONPATH=/app seo-vnc \\" >&2
-    echo "    python scripts/clients/cchabitat/gmb_ui_prepare.py" >&2
+    echo "  bash scripts/gmb_vnc_shell.sh" >&2
+    echo "  python scripts/clients/cchabitat/gmb_ui_prepare.py" >&2
     exit 1
     ;;
 esac
