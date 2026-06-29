@@ -14,25 +14,29 @@ chmod 700 "${XDG_RUNTIME_DIR}" || true
 VNC_PORT=5900
 WEB_PORT=7900
 
-_log() { echo "[vnc] $*"; }
+# Logs must go to stderr — stdout is used for function return values (paths, PIDs).
+_log() { echo "[vnc] $*" >&2; }
 
-_port_open() {
-  local host="${1:?host}"
-  local port="${2:?port}"
-  if (echo >/dev/tcp/"${host}"/"${port}") 2>/dev/null; then
-    echo "open"
-  else
-    echo "closed"
+_port_listening() {
+  local port="${1:?port}"
+  if command -v ss >/dev/null 2>&1; then
+    ss -tln 2>/dev/null | grep -qE ":${port}\\b"
+    return $?
   fi
+  if command -v netstat >/dev/null 2>&1; then
+    netstat -tln 2>/dev/null | grep -qE ":${port}\\b"
+    return $?
+  fi
+  # Fallback: avoid probing the VNC port (raw TCP causes x11vnc log noise).
+  return 1
 }
 
-_wait_port() {
-  local host="${1:?host}"
-  local port="${2:?port}"
-  local tries="${3:-40}"
+_wait_port_listening() {
+  local port="${1:?port}"
+  local tries="${2:-40}"
   local i
   for i in $(seq 1 "${tries}"); do
-    if [[ "$(_port_open "${host}" "${port}")" == "open" ]]; then
+    if _port_listening "${port}"; then
       return 0
     fi
     sleep 0.25
@@ -105,13 +109,20 @@ _find_novnc_web() {
   return 1
 }
 
+_x11vnc_healthy() {
+  pgrep -f '[x]11vnc' >/dev/null 2>&1 && _port_listening "${VNC_PORT}"
+}
+
+_websockify_healthy() {
+  pgrep -f '[w]ebsockify' >/dev/null 2>&1 && _port_listening "${WEB_PORT}"
+}
+
 _start_x11vnc() {
-  if [[ "$(_port_open 127.0.0.1 "${VNC_PORT}")" == "open" ]]; then
-    _log "port ${VNC_PORT} already open — skipping x11vnc start"
-    pgrep -f '[x]11vnc' | head -1
+  if _x11vnc_healthy; then
+    _log "x11vnc already running on port ${VNC_PORT}"
     return 0
   fi
-  local passfile pid
+  local passfile
   passfile="$(_ensure_passfile)"
   _log "starting x11vnc on port ${VNC_PORT}"
   x11vnc \
@@ -123,22 +134,20 @@ _start_x11vnc() {
     -listen 127.0.0.1 \
     -noxdamage \
     >/tmp/x11vnc.log 2>&1 &
-  pid=$!
-  if ! _wait_port 127.0.0.1 "${VNC_PORT}" 30; then
+  if ! _wait_port_listening "${VNC_PORT}" 30; then
     _log "x11vnc did not open port ${VNC_PORT}"
     tail -30 /tmp/x11vnc.log 2>/dev/null || true
     return 1
   fi
-  echo "${pid}"
+  _log "x11vnc ready on port ${VNC_PORT}"
 }
 
 _start_websockify() {
-  if [[ "$(_port_open 127.0.0.1 "${WEB_PORT}")" == "open" ]]; then
-    _log "port ${WEB_PORT} already open — skipping websockify start"
-    pgrep -f '[w]ebsockify' | head -1
+  if _websockify_healthy; then
+    _log "websockify already running on port ${WEB_PORT}"
     return 0
   fi
-  local novnc_web pid
+  local novnc_web
   novnc_web="$(_find_novnc_web)" || {
     _log "ERROR: vnc.html not found under /usr/share/novnc"
     return 1
@@ -146,13 +155,12 @@ _start_websockify() {
   _log "starting websockify on ${WEB_PORT} -> ${VNC_PORT} (web=${novnc_web})"
   websockify --web "${novnc_web}" "0.0.0.0:${WEB_PORT}" "localhost:${VNC_PORT}" \
     >/tmp/websockify.log 2>&1 &
-  pid=$!
-  if ! _wait_port 127.0.0.1 "${WEB_PORT}" 30; then
+  if ! _wait_port_listening "${WEB_PORT}" 30; then
     _log "websockify did not open port ${WEB_PORT}"
     tail -30 /tmp/websockify.log 2>/dev/null || true
     return 1
   fi
-  echo "${pid}"
+  _log "websockify ready on port ${WEB_PORT}"
 }
 
 _restart_x11vnc() {
@@ -160,7 +168,7 @@ _restart_x11vnc() {
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${VNC_PORT}"/tcp 2>/dev/null || true
   fi
-  sleep 0.3
+  sleep 0.5
   _start_x11vnc
 }
 
@@ -169,7 +177,7 @@ _restart_websockify() {
   if command -v fuser >/dev/null 2>&1; then
     fuser -k "${WEB_PORT}"/tcp 2>/dev/null || true
   fi
-  sleep 0.3
+  sleep 0.5
   _start_websockify
 }
 
@@ -179,21 +187,21 @@ _start_xvfb
 _start_fluxbox
 _start_terminal
 
-X11VNC_PID="$(_start_x11vnc)" || exit 1
-WEBSOCKIFY_PID="$(_start_websockify)" || exit 1
+_start_x11vnc
+_start_websockify
 
 _log "noVNC: http://0.0.0.0:${WEB_PORT}/vnc.html  (password: vnc)"
 
 while true; do
-  if ! kill -0 "${X11VNC_PID}" 2>/dev/null; then
-    _log "x11vnc stopped; restarting (tail /tmp/x11vnc.log):"
-    tail -20 /tmp/x11vnc.log 2>/dev/null || true
-    X11VNC_PID="$(_restart_x11vnc)" || true
+  if ! _x11vnc_healthy; then
+    _log "x11vnc unhealthy; restarting (tail /tmp/x11vnc.log):"
+    tail -10 /tmp/x11vnc.log 2>/dev/null || true
+    _restart_x11vnc || true
   fi
-  if ! kill -0 "${WEBSOCKIFY_PID}" 2>/dev/null; then
-    _log "websockify stopped; restarting (tail /tmp/websockify.log):"
-    tail -20 /tmp/websockify.log 2>/dev/null || true
-    WEBSOCKIFY_PID="$(_restart_websockify)" || true
+  if ! _websockify_healthy; then
+    _log "websockify unhealthy; restarting (tail /tmp/websockify.log):"
+    tail -10 /tmp/websockify.log 2>/dev/null || true
+    _restart_websockify || true
   fi
-  sleep 2
+  sleep 5
 done
