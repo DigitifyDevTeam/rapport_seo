@@ -39,7 +39,8 @@ import pandas as pd
 
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
-                          get_client, gmb_ui_session_owner, gmb_ui_session_path,
+                          clarity_ui_session_path, get_client,
+                          gmb_ui_session_owner, gmb_ui_session_path,
                           resolve_google_chrome_profile,
                           load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
@@ -502,7 +503,7 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         return
 
-    session_path = _CLARITY_UI_SESSIONS_DIR / f"clarity-{client.id}.json"
+    session_path = clarity_ui_session_path(client, _CLARITY_UI_SESSIONS_DIR)
     logger.info("[clarity-ui] session path=%s  exists=%s",
                 session_path, session_path.exists())
     if not session_path.exists():
@@ -786,8 +787,17 @@ def _ga4_capture_complete(output_dir: Path, period: Period) -> bool:
     )
 
 
-def _capture_ga4_ui_playwright(client: ClientConfig, period: Period,
-                               *, show: bool = False) -> bool:
+def _unlock_gmb_chrome_profiles() -> None:
+    """Drop Chromium singleton locks after a killed Playwright run."""
+    script = PROJECT_ROOT / "scripts" / "gmb_unlock_chrome_profiles.sh"
+    if not script.is_file():
+        return
+    try:
+        subprocess.run(["bash", str(script)], timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("[ga4-ui] profile unlock failed: %s", exc)
+
+
     """Playwright + persistent Chrome profile (preferred, runs every report)."""
     if not _GA4_UI_CAPTURE_SCRIPT.exists():
         logger.warning("[ga4-ui] missing %s", _GA4_UI_CAPTURE_SCRIPT)
@@ -815,12 +825,16 @@ def _capture_ga4_ui_playwright(client: ClientConfig, period: Period,
                 client.id, period.label, client.output_dir / period.label)
     try:
         result = subprocess.run(
-            cmd, timeout=300, check=False, capture_output=True, text=True,
+            cmd, timeout=900, check=False, capture_output=True, text=True,
         )
         if result.stdout:
             logger.info("[ga4-ui] stdout:\n%s", result.stdout[-2500:])
         if result.stderr:
             logger.info("[ga4-ui] stderr:\n%s", result.stderr[-2500:])
+    except subprocess.TimeoutExpired as exc:
+        logger.warning("[ga4-ui] Playwright capture failed: %s", exc)
+        _unlock_gmb_chrome_profiles()
+        return False
     except (FileNotFoundError, subprocess.SubprocessError) as exc:
         logger.warning("[ga4-ui] Playwright capture failed: %s", exc)
         return False
@@ -828,6 +842,7 @@ def _capture_ga4_ui_playwright(client: ClientConfig, period: Period,
     if result.returncode != 0:
         logger.warning("[ga4-ui] Playwright capture exit code %d",
                        result.returncode)
+        _unlock_gmb_chrome_profiles()
         return False
     return _ga4_ui_top_row_ready(client.output_dir / period.label)
 
@@ -852,6 +867,7 @@ def _capture_ga4_ui_session_json(client: ClientConfig, output_dir: Path,
 
     profile = _ga4_ui_profile_dir(client)
     json_out = output_dir / "ga4_ui.json"
+    _unlock_gmb_chrome_profiles()
     for session_path in session_paths:
         cmd = [
             node_bin,
@@ -863,8 +879,8 @@ def _capture_ga4_ui_session_json(client: ClientConfig, output_dir: Path,
             "--period-end", period.end.isoformat(),
             "--report-month", period.label,
         ]
-        if profile.is_dir():
-            cmd.extend(["--profile", str(profile)])
+        # Session cookies only — Puppeteer must not reopen the Playwright
+        # userDataDir (chrome-profile-gmb lock / "browser already running").
         if show or _RUNTIME_REFRESH_GA4:
             cmd.append("--show")
 
@@ -1448,6 +1464,8 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             ",".join(str(a).strip() for a in aliases if str(a).strip()),
         ])
     cmd.extend(["--client-id", client.id])
+    session_owner = gmb_ui_session_owner(client)
+    using_foreign_session = session_owner != client.id
     perf_url = ""
     if perf_url_file.is_file():
         perf_url = perf_url_file.read_text(encoding="utf-8").strip()
@@ -1467,8 +1485,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         ) if period else perf_url
         cmd.extend(["--dashboard-url", perf_url])
         logger.info("[gmb-ui] Performance URL from %s", perf_url_file.name)
-    elif dash_from_session and (
-        "#mpd=" in dash_from_session or "promote/performance" in dash_from_session
+    elif (
+        not using_foreign_session
+        and dash_from_session
+        and ("#mpd=" in dash_from_session or "promote/performance" in dash_from_session)
     ):
         dash_from_session = rewrite_performance_url_month(
             dash_from_session,
@@ -1478,6 +1498,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         logger.info(
             "[gmb-ui] Performance URL from %s (saved at login)",
             session_path.name,
+        )
+    elif using_foreign_session and not perf_url:
+        logger.info(
+            "[gmb-ui] shared session %s — no %s; opening %s via GBP app/search",
+            session_path.name,
+            perf_url_file.name,
+            client.id,
         )
     logger.info(
         "[gmb-ui] capturing for %s (project=%r, period=%s)",

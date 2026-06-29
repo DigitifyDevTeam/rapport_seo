@@ -36,6 +36,7 @@ from src.config import (
     resolve_google_chrome_profile,
 )
 from src.periods import Period
+from scripts.gmb_ui_login import unlock_chrome_profile
 
 GA4_UI_CAPTURE_VERSION = 2
 FILE_MAP = {
@@ -205,7 +206,12 @@ def _shot_cards_from_page(page, visites_path: Path, country_path: Path) -> tuple
 def _capture_with_page(page, home_url: str, *, show: bool,
                        visites_path: Path, country_path: Path) -> tuple[bool, bool]:
     print(f"[ga4-ui] {home_url}")
-    page.goto(home_url, wait_until="networkidle", timeout=180_000)
+    docker = (os.environ.get("SEO_REPORT_DOCKER") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    wait_until = "domcontentloaded" if docker else "networkidle"
+    goto_timeout = 120_000 if docker else 180_000
+    page.goto(home_url, wait_until=wait_until, timeout=goto_timeout)
     time.sleep(6 if not show else 4)
     _wait_for_dashboard(page)
     time.sleep(2)
@@ -290,6 +296,7 @@ def capture_ga4_ui(
 
         if not (visites_ok and country_ok) and profile.is_dir():
             print(f"[ga4-ui] Chrome profile: {profile}")
+            unlock_chrome_profile(profile)
             context = pw.chromium.launch_persistent_context(
                 user_data_dir=str(profile),
                 headless=not show,

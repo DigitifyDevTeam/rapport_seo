@@ -52,6 +52,8 @@ from playwright.sync_api import (Frame, Page,
                                   TimeoutError as PlaywrightTimeoutError,
                                   sync_playwright)
 
+from scripts.gmb_ui_login import unlock_chrome_profile
+
 
 TAB_TARGETS: list[dict[str, Any]] = [
     {"id": "overview",
@@ -226,6 +228,12 @@ def _parse_args() -> argparse.Namespace:
 
 def _client_performance_url_path(client_id: str, session_path: Path) -> Path:
     return session_path.parent / f"gmb-performance-{client_id}.txt"
+
+
+def _session_belongs_to_client(session_path: Path, client_id: str) -> bool:
+    if not client_id:
+        return True
+    return session_path.stem == f"gmb-{client_id}"
 
 
 def _load_client_performance_url(client_id: str, session_path: Path) -> str:
@@ -2145,6 +2153,7 @@ def _launch_browser_context(pw, args: argparse.Namespace,
     if args.profile:
         profile_dir = Path(args.profile).resolve()
         profile_dir.mkdir(parents=True, exist_ok=True)
+        unlock_chrome_profile(profile_dir)
         context = pw.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             **ctx_common,
@@ -2344,13 +2353,18 @@ def main() -> int:
         )
         dashboard_page: Page | None = None
         dashboard_frame: Frame | None = None
-        dash_url = (args.dashboard_url or "").strip() or saved_url
-
         client_id = (args.client_id or "").strip()
         client_perf_url = _load_client_performance_url(client_id, session_path)
-        if client_perf_url and not dash_url:
+        dash_url = (args.dashboard_url or "").strip()
+        if not dash_url:
             dash_url = client_perf_url
-            _log(f"using per-client Performance URL ({client_id})")
+        if not dash_url and _session_belongs_to_client(session_path, client_id):
+            dash_url = saved_url
+        elif not dash_url and saved_url and client_id:
+            _log(
+                f"ignoring saved URL from {session_path.name} "
+                f"(use gmb-performance-{client_id}.txt for this brand)",
+            )
 
         cal_start, cal_end = _report_calendar_month_bounds(
             period_end or period_start,

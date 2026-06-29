@@ -29,11 +29,11 @@ const CARD_TITLES = {
 
 function parseArgs() {
   const args = process.argv.slice(2);
+  const has = (name) => args.includes(name);
   const get = (name) => {
     const idx = args.indexOf(name);
     return idx >= 0 ? args[idx + 1] : null;
   };
-  const has = (name) => args.indexOf(name) >= 0;
   const session = get("--session");
   const out = get("--out");
   const propertyId = get("--property-id");

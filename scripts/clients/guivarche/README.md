@@ -26,6 +26,19 @@ python scripts/capture_gmb_performance_url.py guivarche --show
 python scripts/clients/guivarche/gmb_ui_extract.py 2026-05
 ```
 
+## One-time UI setup (fixes n/a GMB + Clarity screenshots)
+
+```powershell
+python scripts/clients/guivarche/prepare_ui.py
+```
+
+Or step by step:
+
+```powershell
+node scripts/clients/guivarche/clarity_ui_login.js
+python scripts/capture_gmb_performance_url.py guivarche --show
+```
+
 ## Monthly report
 
 ```powershell

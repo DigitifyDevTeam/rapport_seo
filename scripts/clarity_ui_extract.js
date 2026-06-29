@@ -1505,7 +1505,7 @@ async function main() {
     await page.setCookie(...raw.cookies);
   }
 
-  await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
+  await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: dockerMode ? 120_000 : 30_000 });
   if (raw.storage && raw.storage.localStorage) {
     await page.evaluate((items) => {
       for (const [k, v] of Object.entries(items)) localStorage.setItem(k, v);
@@ -1517,7 +1517,10 @@ async function main() {
     }, raw.storage.sessionStorage);
   }
 
-  await page.goto(targetUrl, { waitUntil: "networkidle2" });
+  await page.goto(targetUrl, {
+    waitUntil: dockerMode ? "domcontentloaded" : "networkidle2",
+    timeout: dockerMode ? 120_000 : 30_000,
+  });
   if (periodStart && periodEnd) {
     const uiApplied = await applyCustomDateRangeUi(page, periodStart, periodEnd);
     if (uiApplied) {

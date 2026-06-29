@@ -180,6 +180,31 @@ def gmb_ui_session_path(
     return own
 
 
+def clarity_ui_session_path(
+    client: ClientConfig,
+    sessions_dir: Path | None = None,
+) -> Path:
+    """Prefer ``clarity-<client_id>.json``; reuse agency login when missing."""
+    base = sessions_dir or (OUTPUTS_DIR / "_sessions")
+    own = base / f"clarity-{client.id}.json"
+    if own.is_file():
+        return own
+    fallbacks: list[str] = []
+    shared_gmb = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    if shared_gmb:
+        fallbacks.append(shared_gmb)
+    fallbacks.extend(("deepcleaning", "origincbd", "digitify", "cchabitat"))
+    seen: set[str] = {client.id}
+    for client_id in fallbacks:
+        if not client_id or client_id in seen:
+            continue
+        seen.add(client_id)
+        candidate = base / f"clarity-{client_id}.json"
+        if candidate.is_file():
+            return candidate
+    return own
+
+
 def gmb_ui_session_owner(client: ClientConfig) -> str:
     """Id suffix of the session file actually used (for logging)."""
     path = gmb_ui_session_path(client)

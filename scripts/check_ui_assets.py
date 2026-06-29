@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 load_dotenv(_PROJECT_ROOT / ".env")
 
-from src.config import OUTPUTS_DIR, load_production_clients
+from src.config import OUTPUTS_DIR, clarity_ui_session_path, load_production_clients
 
 SESSIONS = OUTPUTS_DIR / "_sessions"
 CLARITY_CARDS = ("overview", "devices", "referrers", "popular_pages")
@@ -29,7 +29,7 @@ def main() -> int:
     for client in load_production_clients():
         print(f"=== {client.id} ({client.name}) ===")
         gmb_sess = SESSIONS / f"gmb-{client.id}.json"
-        clr_sess = SESSIONS / f"clarity-{client.id}.json"
+        clr_sess = clarity_ui_session_path(client, SESSIONS)
         print(f"  session gmb:    {'OK' if gmb_sess.is_file() else 'MISSING'} {gmb_sess}")
         print(f"  session clarity: {'OK' if clr_sess.is_file() else 'MISSING'} {clr_sess}")
         for month_dir in sorted((OUTPUTS_DIR / client.id).glob("20*-*")):
