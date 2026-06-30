@@ -208,3 +208,55 @@ def merge_clarity_kpi_fallback(
                 merged[key] = clean
                 logger.info("[clarity-kpi-ocr] recovered %s=%s", key, merged[key])
     return merged
+
+
+_BAD_CLARITY_WIDGET_RE = re.compile(
+    r"retours rapides|quick back|événements intelligents|smart event|"
+    r"utilisateur principal|top user|flutter|désormais disponible",
+    re.IGNORECASE,
+)
+_GOOD_DEVICES_WIDGET_RE = re.compile(
+    r"mobile|desktop|navigateur|browser|appareil|device|chrome|safari|android|ios",
+    re.IGNORECASE,
+)
+_GOOD_REFERRERS_WIDGET_RE = re.compile(
+    r"google|direct|bing|canal|référent|referrer|organic|organique|\.com|\.fr",
+    re.IGNORECASE,
+)
+
+
+def clarity_widget_png_valid(card_id: str, path: Path) -> bool:
+    """Reject Clarity widget PNGs that clearly show the wrong dashboard card."""
+    if not path.is_file() or path.stat().st_size < 500:
+        return False
+    try:
+        text = ocr_text_from_png(path)
+    except OSError:
+        return True
+    if not (text or "").strip():
+        return True
+    norm = _normalize_ocr(text)
+    if _BAD_CLARITY_WIDGET_RE.search(norm):
+        logger.warning(
+            "[clarity-widget-ocr] %s rejected (wrong widget content in %s)",
+            card_id,
+            path.name,
+        )
+        return False
+    if card_id == "devices":
+        ok = bool(_GOOD_DEVICES_WIDGET_RE.search(norm))
+        if not ok:
+            logger.warning(
+                "[clarity-widget-ocr] devices PNG missing device/browser signals (%s)",
+                path.name,
+            )
+        return ok
+    if card_id == "referrers":
+        ok = bool(_GOOD_REFERRERS_WIDGET_RE.search(norm))
+        if not ok:
+            logger.warning(
+                "[clarity-widget-ocr] referrers PNG missing traffic-source signals (%s)",
+                path.name,
+            )
+        return ok
+    return True

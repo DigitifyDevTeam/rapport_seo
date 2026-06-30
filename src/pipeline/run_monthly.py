@@ -55,7 +55,10 @@ from src.periods import REPORTING_ANCHOR_DAY, Period, month_of_label_fr
 from src.pipeline.delivery import send_report
 from src.reporting.ensure_template import ensure_report_template
 from src.reporting.export_pdf import export as export_pdf
-from src.reporting.clarity_kpi_ocr import merge_clarity_kpi_fallback
+from src.reporting.clarity_kpi_ocr import (
+    clarity_widget_png_valid,
+    merge_clarity_kpi_fallback,
+)
 from src.reporting.gmb_business_card import (
     apply_business_card_reference,
     ensure_valid_business_card,
@@ -73,7 +76,7 @@ logger = logging.getLogger(__name__)
 GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
-CLARITY_UI_CAPTURE_VERSION = "hidpi-v4"
+CLARITY_UI_CAPTURE_VERSION = "hidpi-v5"
 
 
 @dataclass
@@ -533,6 +536,14 @@ def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
     for card_id in _clarity_required_card_ids(client):
         png = output_dir / f"clarity_card_{card_id}.png"
         if not png.exists() or png.stat().st_size < 500:
+            return False
+        if card_id in ("devices", "referrers") and not clarity_widget_png_valid(
+            card_id, png,
+        ):
+            logger.info(
+                "[clarity-ui] %s PNG failed content check — will re-capture",
+                card_id,
+            )
             return False
     try:
         payload = json.loads(json_path.read_text(encoding="utf-8"))
@@ -1189,23 +1200,35 @@ def _resolve_clarity_ui_charts(ui_payload: dict[str, Any] | None,
     next to ``clarity_ui.json`` when the JSON ``charts`` block is missing.
     """
     out: dict[str, str] = {}
-    charts = (ui_payload or {}).get("charts") or {}
-    for key, raw_path in charts.items():
-        if not raw_path:
-            continue
-        candidate = Path(str(raw_path))
-        if not candidate.is_absolute():
-            candidate = (Path.cwd() / candidate).resolve()
-        if candidate.exists():
-            out[str(key)] = str(candidate)
+    charts = (ui_payload or {}).get("charts")
+    if isinstance(charts, dict):
+        for key, raw_path in charts.items():
+            if not raw_path:
+                continue
+            candidate = Path(str(raw_path))
+            if not candidate.is_absolute():
+                candidate = (Path.cwd() / candidate).resolve()
+            if candidate.exists():
+                if key in ("devices", "referrers") and not clarity_widget_png_valid(
+                    key, candidate,
+                ):
+                    continue
+                out[str(key)] = str(candidate)
 
     for known in ("overview", "devices", "referrers", "popular_pages",
                   "popular_products"):
         if known in out:
             continue
+        if isinstance(charts, dict) and known in charts:
+            continue
         fallback = output_dir / f"clarity_card_{known}.png"
-        if fallback.exists():
-            out[known] = str(fallback)
+        if not fallback.exists():
+            continue
+        if known in ("devices", "referrers") and not clarity_widget_png_valid(
+            known, fallback,
+        ):
+            continue
+        out[known] = str(fallback)
     return out
 
 

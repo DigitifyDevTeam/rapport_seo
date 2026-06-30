@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v4";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v5";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -152,6 +152,13 @@ const KPI_LABELS = {
  */
 const CARD_CAPTURES = [
   {
+    id: "devices",
+    anchorTabs: ["Navigateurs", "Browsers", "Appareils", "Devices"],
+    activeTab: "Appareils",
+    altActiveTabs: ["Devices", "Browsers", "Navigateurs"],
+    matchMode: "devices",
+  },
+  {
     id: "referrers",
     anchorTabs: [
       "Référent",
@@ -167,13 +174,6 @@ const CARD_CAPTURES = [
     altActiveTabs: ["Référents", "Referrers", "Referrer"],
     matchMode: "referrers",
     rejectPromo: true,
-  },
-  {
-    id: "devices",
-    anchorTabs: ["Navigateurs", "Browsers", "Appareils", "Devices"],
-    activeTab: "Appareils",
-    altActiveTabs: ["Devices", "Browsers", "Navigateurs"],
-    matchMode: "devices",
   },
   {
     id: "popular_pages",
@@ -234,9 +234,9 @@ const CARD_BOUNDS = {
 
 const CARD_BOUNDS_DOCKER = {
   minWidth: 280,
-  maxWidth: 1020,
+  maxWidth: 680,
   minHeight: 200,
-  maxHeight: 780,
+  maxHeight: 720,
 };
 
 function cardBoundsForMode(dockerMode) {
@@ -372,6 +372,129 @@ async function applyCustomDateRangeUi(page, periodStart, periodEnd) {
     await new Promise((r) => setTimeout(r, 4000));
   }
   return applied;
+}
+
+/** Minimum score (0–100) to accept a scored widget card. */
+const WIDGET_SCORE_MIN = 48;
+
+async function findWidgetCardByScoring(page, targetId, bounds) {
+  return page.evaluateHandle((id, limits, minScore) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+
+    const wrongWidgetRe =
+      /retours rapides|quick back|événements intelligents|smart event|entonnoir|funnel|utilisateur principal|top user|flutter|désormais disponible|classeur|nous contacter|clic sortant/i;
+
+    function extractHeaderTabs(card) {
+      const found = new Set();
+      const cardRect = card.getBoundingClientRect();
+      for (const el of card.querySelectorAll(
+        '[role="tab"], button, a, span, li, div, p',
+      )) {
+        const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw || raw.length > 42) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (rect.top - cardRect.top > 96) continue;
+        if (rect.width > 360 || rect.height > 72) continue;
+        found.add(norm(raw));
+      }
+      return found;
+    }
+
+    function scoreCard(card, widgetId) {
+      const text = (card.innerText || "").slice(0, 5000).toLowerCase();
+      const tabs = extractHeaderTabs(card);
+      let score = 0;
+
+      if (wrongWidgetRe.test(text)) {
+        score -= 120;
+      }
+
+      if (widgetId === "devices") {
+        const hasNav = tabs.has("navigateurs") || tabs.has("browsers");
+        const hasDev = tabs.has("appareils") || tabs.has("devices");
+        if (hasNav) score += 28;
+        if (hasDev) score += 28;
+        if (hasNav && hasDev) score += 18;
+        if (/mobile|desktop|ordinateur|tablette|android|ios|chrome|safari|firefox|edge/.test(text)) {
+          score += 22;
+        }
+        if (/\b\d[\d\s.,]*\s*%/.test(text)) score += 8;
+        if (/retours rapides|quick back|événements intelligents|smart event/.test(text)) {
+          score -= 150;
+        }
+        if (!hasNav || !hasDev) score -= 40;
+      } else if (widgetId === "referrers") {
+        const hasRef =
+          tabs.has("référent") || tabs.has("référents")
+          || tabs.has("referrer") || tabs.has("referrers");
+        const hasChannel = tabs.has("canal") || tabs.has("channel");
+        const hasCampaign = tabs.has("campagne") || tabs.has("campaign");
+        if (hasRef) score += 24;
+        if (hasChannel) score += 24;
+        if (hasCampaign) score += 24;
+        if (hasRef && hasChannel && hasCampaign) score += 16;
+        if (/google|bing|direct|\(direct\)|yahoo|facebook|instagram|organic|organique/.test(text)) {
+          score += 20;
+        }
+        if (/\.com|\.fr|\.net|\.org/.test(text)) score += 10;
+        if (/retours rapides|événements intelligents|utilisateur principal|flutter/.test(text)) {
+          score -= 150;
+        }
+        if (!hasRef || !hasChannel || !hasCampaign) score -= 50;
+      } else {
+        return -999;
+      }
+
+      return score;
+    }
+
+    function enumerateCandidateCards(limitsArg) {
+      const raw = [];
+      for (const el of document.querySelectorAll("div, section, article, li")) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < limitsArg.minWidth || rect.width > limitsArg.maxWidth) continue;
+        if (rect.height < limitsArg.minHeight || rect.height > limitsArg.maxHeight) continue;
+        if (rect.bottom < 0 || rect.top > window.innerHeight + 200) continue;
+        const text = (el.innerText || "").trim();
+        if (text.length < 50 || !/\d/.test(text)) continue;
+        const hasMenu = Boolean(
+          el.querySelector("button,[role='button'],[aria-label*='more' i],[aria-label*='menu' i]"),
+        );
+        const hasTabs = Boolean(el.querySelector('[role="tab"], button, a'));
+        if (!hasMenu && !hasTabs) continue;
+        raw.push({ el, area: rect.width * rect.height });
+      }
+      raw.sort((a, b) => a.area - b.area);
+      const kept = [];
+      for (const item of raw) {
+        const dominated = kept.some((k) => k.el.contains(item.el));
+        if (dominated) continue;
+        for (let i = kept.length - 1; i >= 0; i -= 1) {
+          if (item.el.contains(kept[i].el)) {
+            kept.splice(i, 1);
+          }
+        }
+        kept.push(item);
+      }
+      return kept.map((k) => k.el);
+    }
+
+    const candidates = enumerateCandidateCards(limits);
+    let best = null;
+    let bestScore = -Infinity;
+    for (const card of candidates) {
+      const s = scoreCard(card, id);
+      if (s > bestScore) {
+        bestScore = s;
+        best = card;
+      }
+    }
+    if (!best || bestScore < minScore) return null;
+    return best;
+  }, targetId, bounds, WIDGET_SCORE_MIN);
 }
 
 async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
@@ -535,14 +658,22 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
 
 async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options = {}) {
   const limits = bounds || activeCardBounds;
+  const targetId = options.targetId || "";
+  const useScoring = targetId === "devices" || targetId === "referrers";
   if (options.scrollToTopFirst) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await new Promise((r) => setTimeout(r, 400));
   }
   const maxSteps = options.maxScrollSteps || 10;
   for (let step = 0; step < maxSteps; step += 1) {
-    const handle = await findWidgetCardHandle(page, anchorTabs, limits, options);
-    const card = handle ? handle.asElement() : null;
+    let card = null;
+    if (useScoring) {
+      const scored = await findWidgetCardByScoring(page, targetId, limits);
+      card = scored ? scored.asElement() : null;
+    } else {
+      const handle = await findWidgetCardHandle(page, anchorTabs, limits, options);
+      card = handle ? handle.asElement() : null;
+    }
     if (card) {
       return card;
     }
@@ -938,9 +1069,14 @@ function widgetFindOptions(target) {
 async function widgetBodyLooksReady(cardHandle, targetId) {
   return cardHandle.evaluate((card, id) => {
     const text = (card.innerText || "").slice(0, 4500).toLowerCase();
+    const wrongWidget =
+      /retours rapides|quick back|événements intelligents|smart event|utilisateur principal|top user|flutter|désormais disponible|entonnoir|funnel|classeur|nous contacter|clic sortant/i;
+    if (wrongWidget.test(text)) {
+      return false;
+    }
     if (id === "devices") {
       return (
-        /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|windows|mac/.test(
+        /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|windows|mac|chrome|safari/.test(
           text,
         ) && !/configurer des entonnoirs|entonnoir/.test(text)
       );
@@ -950,7 +1086,6 @@ async function widgetBodyLooksReady(cardHandle, targetId) {
         /google|direct|bing|yahoo|facebook|instagram|organic|organique|référent|referrer|canal|campagn|\.com|\.fr/.test(
           text,
         )
-        && !/événements intelligents|retours rapides|classeur|nous contacter/.test(text)
       );
     }
     return true;
@@ -1113,6 +1248,12 @@ function enhanceCapturedPngs(outDir) {
 
 async function screenshotPreparedCard(page, target, card, outPath) {
   if (!card) return null;
+  if (target.id === "devices" || target.id === "referrers") {
+    if (!(await widgetBodyLooksReady(card, target.id))) {
+      console.warn(`[card:${target.id}] refusing screenshot — widget body invalid`);
+      return null;
+    }
+  }
   await dismissMenus(page);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   if (fs.existsSync(outPath)) {
@@ -1257,6 +1398,19 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
 
   if (!downloaded) {
     console.warn(`[card:${target.id}] PNG download timed out`);
+    return null;
+  }
+
+  const classified = classifyPngFilename(path.basename(downloaded));
+  if (classified && classified !== target.id) {
+    console.warn(
+      `[card:${target.id}] download filename maps to ${classified}, rejecting`,
+    );
+    try {
+      fs.unlinkSync(downloaded);
+    } catch (_) {
+      /* ignore */
+    }
     return null;
   }
 
