@@ -12,6 +12,9 @@ cd "${ROOT}"
 
 chmod +x scripts/vnc_*.sh scripts/gmb_ui_prepare_vnc*.sh 2>/dev/null || true
 
+export HOST_UID="$(id -u)"
+export HOST_GID="$(id -g)"
+
 echo "Building image if needed..."
 docker compose build seo-reports
 

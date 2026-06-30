@@ -19,6 +19,7 @@ if ! docker compose --profile tools ps --status running seo-vnc 2>/dev/null | gr
 fi
 
 docker compose --profile tools exec -it \
+  -u "$(id -u):$(id -g)" \
   -e DISPLAY="${VNC_DISPLAY}" \
   -e PYTHONPATH=/app \
   -e SEO_REPORT_VNC=1 \

@@ -44,6 +44,7 @@ gmb_vnc_warn_missing_master() {
 
 gmb_vnc_docker_exec() {
   docker compose --profile tools exec -it \
+    -u "$(id -u):$(id -g)" \
     -e DISPLAY="${GMB_VNC_DISPLAY}" \
     -e PYTHONPATH=/app \
     -e SEO_REPORT_VNC=1 \

@@ -49,10 +49,12 @@ services:
   # Browser UI on the VPS (noVNC). Use ONLY for one-time manual login flows.
   # Host network avoids Docker iptables DNAT (broken on some OVH hosts without root).
   # Connect: http://127.0.0.1:7900/vnc.html on the server, or SSH tunnel from your PC.
+  # Run as host user (HOST_UID/HOST_GID set by vnc_start.sh) so outputs/ stays writable.
   seo-vnc:
     profiles:
       - tools
     image: rapport-seo:latest
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
     network_mode: host
     working_dir: /app
     env_file:
