@@ -17,7 +17,7 @@ _unlock_dir() {
 
 shopt -s nullglob
 mkdir -p "${SESSIONS}/chrome-profile-gmb-vps" 2>/dev/null || true
-for dir in "${SESSIONS}"/chrome-profile-gmb-vps "${SESSIONS}"/chrome-profile-gmb* "${SESSIONS}"/chrome-profile; do
+for dir in "${SESSIONS}"/chrome-profile-gmb-vps "${SESSIONS}"/chrome-profile-gmb* "${SESSIONS}"/chrome-profile-clarity "${SESSIONS}"/chrome-profile; do
   _unlock_dir "${dir}"
 done
 

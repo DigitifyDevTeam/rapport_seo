@@ -48,6 +48,7 @@ gmb_vnc_docker_exec() {
     -e DISPLAY="${GMB_VNC_DISPLAY}" \
     -e PYTHONPATH=/app \
     -e SEO_REPORT_VNC=1 \
+    -e SEO_REPORT_DOCKER=1 \
     -e SEO_REPORT_GMB_PROFILE="${GMB_VNC_PROFILE}" \
     -w /app \
     seo-vnc \

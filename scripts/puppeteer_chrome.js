@@ -44,12 +44,29 @@ function puppeteerLaunchOptions(base = {}) {
         "",
     ).toLowerCase(),
   );
+  const vncMode = ["1", "true", "yes", "on"].includes(
+    String(process.env.SEO_REPORT_VNC || "").toLowerCase(),
+  );
   const args = [...(base.args || [])];
-  if (dockerMode) {
+  if (dockerMode || vncMode) {
     for (const flag of [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
+    ]) {
+      if (!args.includes(flag)) {
+        args.push(flag);
+      }
+    }
+  }
+  if (vncMode) {
+    for (const flag of [
+      "--disable-gpu",
+      "--disable-gpu-compositing",
+      "--use-gl=swiftshader",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-breakpad",
     ]) {
       if (!args.includes(flag)) {
         args.push(flag);

@@ -38,13 +38,13 @@ echo "Session file: ${SESSION}"
 echo "Chrome profile: ${PROFILE}"
 echo ""
 
-ARGS=(
-  scripts/clarity_ui_login.js
-  --out "/app/outputs/_sessions/clarity-${CLIENT}.json"
-  --profile "/app/outputs/_sessions/chrome-profile-clarity"
-)
 if [[ -n "${PROJECT_ID}" ]]; then
-  ARGS+=(--project-id "${PROJECT_ID}")
+  gmb_vnc_docker_exec python scripts/clarity_ui_login.py \
+    --out "/app/outputs/_sessions/clarity-${CLIENT}.json" \
+    --profile "/app/outputs/_sessions/chrome-profile-clarity" \
+    --project-id "${PROJECT_ID}"
+else
+  gmb_vnc_docker_exec python scripts/clarity_ui_login.py \
+    --out "/app/outputs/_sessions/clarity-${CLIENT}.json" \
+    --profile "/app/outputs/_sessions/chrome-profile-clarity"
 fi
-
-gmb_vnc_docker_exec node "${ARGS[@]}"
