@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v3";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v4";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -172,7 +172,8 @@ const CARD_CAPTURES = [
     id: "devices",
     anchorTabs: ["Navigateurs", "Browsers", "Appareils", "Devices"],
     activeTab: "Appareils",
-    altActiveTabs: ["Devices", "Browsers"],
+    altActiveTabs: ["Devices", "Browsers", "Navigateurs"],
+    matchMode: "devices",
   },
   {
     id: "popular_pages",
@@ -232,10 +233,10 @@ const CARD_BOUNDS = {
 };
 
 const CARD_BOUNDS_DOCKER = {
-  minWidth: 220,
-  maxWidth: 820,
-  minHeight: 160,
-  maxHeight: 720,
+  minWidth: 280,
+  maxWidth: 1020,
+  minHeight: 200,
+  maxHeight: 780,
 };
 
 function cardBoundsForMode(dockerMode) {
@@ -377,8 +378,9 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
   const wideAnchor = Boolean(options.wideAnchor);
   const matchMode = options.matchMode || "default";
   const rejectPromo = Boolean(options.rejectPromo);
+  const targetId = options.targetId || "";
   return page.evaluateHandle(
-    (anchors, limits, wide, mode, skipPromo) => {
+    (anchors, limits, wide, mode, skipPromo, target) => {
       function norm(t) {
         return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
@@ -451,6 +453,11 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
           const hasRef = found.has("référent") || found.has("référents");
           return hasRef && found.has("canal") && found.has("campagne");
         }
+        if (mode === "devices") {
+          const hasNav = found.has("navigateurs") || found.has("browsers");
+          const hasDev = found.has("appareils") || found.has("devices");
+          return hasNav && hasDev;
+        }
         const primary = anchorSet[0];
         const secondary = anchorSet.slice(1);
         if (secondary.length === 0) {
@@ -463,6 +470,33 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
         if (!skipPromo) return false;
         const text = (card.innerText || "").slice(0, 2500);
         return promoRe.test(text);
+      }
+
+      function cardRejectedForTarget(card) {
+        if (!target) return false;
+        const text = (card.innerText || "").slice(0, 4500).toLowerCase();
+        if (target === "devices") {
+          if (/entonnoir|configurer des entonnoirs|ajouter à la watchlist/.test(text)) {
+            return true;
+          }
+          if (
+            /événements intelligents|retours rapides/.test(text)
+            && !/navigateur|mobile|desktop|ordinateur|browser|appareil/.test(text)
+          ) {
+            return true;
+          }
+        }
+        if (target === "referrers") {
+          if (
+            /événements intelligents|retours rapides|classeur|nous contacter|clic sortant/.test(
+              text,
+            )
+            && !/google|bing|direct|organique|organic|\.com|\.fr|référent|referrer/.test(text)
+          ) {
+            return true;
+          }
+        }
+        return false;
       }
 
       function cardPosition(card) {
@@ -478,6 +512,7 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
         seen.add(card);
         if (!cardContainsAnchors(card)) continue;
         if (cardLooksLikePromo(card)) continue;
+        if (cardRejectedForTarget(card)) continue;
         matches.push(card);
       }
       if (!matches.length) return null;
@@ -494,6 +529,7 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
     wideAnchor,
     matchMode,
     rejectPromo,
+    targetId,
   );
 }
 
@@ -893,9 +929,32 @@ function widgetFindOptions(target) {
     wideAnchor: Boolean(target.wideAnchor),
     matchMode: target.matchMode || "default",
     rejectPromo: Boolean(target.rejectPromo),
-    scrollToTopFirst: target.id === "referrers",
-    maxScrollSteps: clarityDockerMode ? 18 : 10,
+    targetId: target.id,
+    scrollToTopFirst: target.id === "referrers" || target.id === "devices",
+    maxScrollSteps: clarityDockerMode ? 22 : 12,
   };
+}
+
+async function widgetBodyLooksReady(cardHandle, targetId) {
+  return cardHandle.evaluate((card, id) => {
+    const text = (card.innerText || "").slice(0, 4500).toLowerCase();
+    if (id === "devices") {
+      return (
+        /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|windows|mac/.test(
+          text,
+        ) && !/configurer des entonnoirs|entonnoir/.test(text)
+      );
+    }
+    if (id === "referrers") {
+      return (
+        /google|direct|bing|yahoo|facebook|instagram|organic|organique|référent|referrer|canal|campagn|\.com|\.fr/.test(
+          text,
+        )
+        && !/événements intelligents|retours rapides|classeur|nous contacter/.test(text)
+      );
+    }
+    return true;
+  }, targetId);
 }
 
 async function prepareWidgetCard(page, target, existingCard = null) {
@@ -968,7 +1027,7 @@ async function prepareWidgetCard(page, target, existingCard = null) {
     }
   }
 
-  await new Promise((r) => setTimeout(r, target.id === "popular_products" ? 3500 : 2500));
+  await new Promise((r) => setTimeout(r, target.id === "popular_products" ? 3500 : 3200));
 
   if (target.id === "popular_pages") {
     for (let fix = 0; fix < 3; fix += 1) {
@@ -1004,7 +1063,29 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   } catch (_) {
     /* ignore */
   }
-  await new Promise((r) => setTimeout(r, 600));
+  await new Promise((r) => setTimeout(r, 800));
+
+  if (target.id === "devices" || target.id === "referrers") {
+    for (let check = 0; check < 4; check += 1) {
+      if (await widgetBodyLooksReady(card, target.id)) break;
+      console.warn(
+        `[card:${target.id}] body not ready (wrong widget or tab still loading) — retry ${check + 1}`,
+      );
+      await clickTabOnCard(
+        page,
+        card,
+        target.activeTab,
+        target.altActiveTabs || [],
+        { exactTabMatch: Boolean(target.exactTabMatch) },
+      );
+      await new Promise((r) => setTimeout(r, 2200));
+    }
+    if (!(await widgetBodyLooksReady(card, target.id))) {
+      console.warn(`[card:${target.id}] widget body still wrong after tab retries`);
+      return null;
+    }
+  }
+
   return card;
 }
 
@@ -1093,7 +1174,7 @@ async function screenshotWidgetCard(page, target, outPath) {
   return screenshotPreparedCard(page, target, card, outPath);
 }
 
-async function captureAutoWidgetCards(page, cardTargets, outDir) {
+async function captureAutoWidgetCards(page, cardTargets, outDir, downloadDir) {
   const charts = {};
   const sharedGroups = new Map();
   const standalone = [];
@@ -1121,7 +1202,13 @@ async function captureAutoWidgetCards(page, cardTargets, outDir) {
   for (const target of standalone) {
     const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
     try {
-      const written = await screenshotWidgetCard(page, target, cardOut);
+      let written = null;
+      if (clarityDockerMode && downloadDir) {
+        written = await downloadWidgetPng(page, downloadDir, target, cardOut);
+      }
+      if (!written) {
+        written = await screenshotWidgetCard(page, target, cardOut);
+      }
       charts[target.id] = written ? chartPathAbsolute(written) : null;
     } catch (err) {
       console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
@@ -1710,6 +1797,7 @@ async function main() {
       page,
       cardTargets,
       path.dirname(outPath),
+      downloadDir,
     );
     Object.assign(charts, autoCharts);
   }
