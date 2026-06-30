@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v6";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v7";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -1090,12 +1090,20 @@ function listPngFiles(dir) {
 }
 
 async function waitForDownloadedPng(downloadDir, sinceMs, timeoutMs = 60000) {
+  const watchDirs = getDownloadWatchDirs(downloadDir);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const files = listPngFiles(downloadDir).filter((f) => f.mtimeMs >= sinceMs - 500);
-    if (files.length) {
-      files.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      return files[0].full;
+    let newest = null;
+    for (const dir of watchDirs) {
+      const files = listPngFiles(dir).filter((f) => f.mtimeMs >= sinceMs - 500);
+      for (const file of files) {
+        if (!newest || file.mtimeMs > newest.mtimeMs) {
+          newest = file;
+        }
+      }
+    }
+    if (newest) {
+      return newest.full;
     }
     await new Promise((r) => setTimeout(r, 350));
   }
@@ -1112,49 +1120,51 @@ async function dismissMenus(page) {
 }
 
 async function clickVisibleMenuItem(page, labels, exactOnly = false) {
-  return page.evaluate(
+  const point = await page.evaluate(
     (labelsArg, exact) => {
-    function norm(t) {
-      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
-    }
-    const wanted = labelsArg.map((l) => norm(l));
-    const nodes = document.querySelectorAll(
-      '[role="menuitem"], [role="menuitemradio"], [role="option"], button, a, li, span, div, p',
-    );
-    let best = null;
-    let bestArea = Infinity;
-    for (const el of nodes) {
-      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
-      if (!raw || raw.length > 80) continue;
-      const key = norm(raw);
-      const match = exact
-        ? wanted.some((w) => key === w)
-        : wanted.some((w) => key === w || key.includes(w));
-      if (!match) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) continue;
-      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-      const area = rect.width * rect.height;
-      if (area < bestArea) {
-        best = el;
-        bestArea = area;
+      function norm(t) {
+        return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
       }
-    }
-    if (!best) return false;
-    best.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-    best.click();
-    return true;
-  },
+      const wanted = labelsArg.map((l) => norm(l));
+      const nodes = document.querySelectorAll(
+        '[role="menuitem"], [role="menuitemradio"], [role="option"], button, a, li, span, div, p',
+      );
+      let best = null;
+      let bestArea = Infinity;
+      for (const el of nodes) {
+        const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw || raw.length > 80) continue;
+        const key = norm(raw);
+        const match = exact
+          ? wanted.some((w) => key === w)
+          : wanted.some((w) => key === w || key.includes(w));
+        if (!match) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+        const area = rect.width * rect.height;
+        if (area < bestArea) {
+          best = {
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+          };
+          bestArea = area;
+        }
+      }
+      return best;
+    },
     labels,
     exactOnly,
   );
+  if (!point) return false;
+  await page.mouse.click(point.x, point.y);
+  return true;
 }
 
 async function openWidgetOverflowMenu(page, cardHandle) {
-  return page.evaluate((card) => {
-    function clickEl(el) {
-      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
-      el.click();
+  const menuBtn = await cardHandle.evaluate((card) => {
+    function center(rect) {
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
     }
     const cardRect = card.getBoundingClientRect();
     const buttons = Array.from(card.querySelectorAll("button, [role='button']"));
@@ -1163,17 +1173,17 @@ async function openWidgetOverflowMenu(page, cardHandle) {
       const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
       const title = (btn.getAttribute("title") || "").toLowerCase();
       if (
-        aria.includes("more") ||
-        aria.includes("options") ||
-        aria.includes("menu") ||
-        aria.includes("actions") ||
-        title.includes("more") ||
-        title.includes("options")
+        aria.includes("more")
+        || aria.includes("options")
+        || aria.includes("menu")
+        || aria.includes("actions")
+        || aria.includes("plus")
+        || title.includes("more")
+        || title.includes("options")
       ) {
         const rect = btn.getBoundingClientRect();
-        if (rect.top - cardRect.top <= 100) {
-          clickEl(btn);
-          return true;
+        if (rect.top - cardRect.top <= 110 && rect.width > 0) {
+          return center(rect);
         }
       }
     }
@@ -1182,19 +1192,18 @@ async function openWidgetOverflowMenu(page, cardHandle) {
     let bestRight = -1;
     for (const btn of buttons) {
       const rect = btn.getBoundingClientRect();
-      if (rect.top - cardRect.top > 90) continue;
+      if (rect.top - cardRect.top > 100) continue;
       if (rect.width <= 0 || rect.width > 56 || rect.height > 56) continue;
       if (rect.right > bestRight) {
-        best = btn;
+        best = center(rect);
         bestRight = rect.right;
       }
     }
-    if (best) {
-      clickEl(best);
-      return true;
-    }
-    return false;
+    return best;
   }, cardHandle);
+  if (!menuBtn) return false;
+  await page.mouse.click(menuBtn.x, menuBtn.y);
+  return true;
 }
 
 function widgetFindOptions(target) {
@@ -1418,8 +1427,18 @@ async function screenshotPreparedCard(page, target, card, outPath) {
   return outPath;
 }
 
+/** Capture one widget: Clarity ⋮ → Télécharger PNG first, element screenshot fallback. */
+async function captureWidgetCard(page, target, outDir, downloadDir) {
+  const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
+  let written = await downloadWidgetPng(page, downloadDir, target, cardOut);
+  if (!written) {
+    written = await screenshotWidgetCard(page, target, cardOut);
+  }
+  return written ? chartPathAbsolute(written) : null;
+}
+
 /** Pages supérieures + Produits populaires share one widget — capture both tabs on the same card. */
-async function captureSharedTabWidgets(page, targets, outDir) {
+async function captureSharedTabWidgets(page, targets, outDir, downloadDir) {
   const sample = targets[0];
   const card = await findWidgetCardHandleWithScroll(
     page,
@@ -1441,10 +1460,15 @@ async function captureSharedTabWidgets(page, targets, outDir) {
     const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
     try {
       const prepared = await prepareWidgetCard(page, target, card);
-      const written = await screenshotPreparedCard(page, target, prepared, cardOut);
-      results[target.id] = written
-        ? chartPathAbsolute(written)
-        : null;
+      if (!prepared) {
+        results[target.id] = null;
+        continue;
+      }
+      let written = await downloadWidgetPng(page, downloadDir, target, cardOut, prepared);
+      if (!written) {
+        written = await screenshotPreparedCard(page, target, prepared, cardOut);
+      }
+      results[target.id] = written ? chartPathAbsolute(written) : null;
     } catch (err) {
       console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
       results[target.id] = null;
@@ -1481,18 +1505,15 @@ async function captureAutoWidgetCards(page, cardTargets, outDir, downloadDir) {
     targets.sort(
       (a, b) => order.indexOf(a.id) - order.indexOf(b.id),
     );
-    const batch = await captureSharedTabWidgets(page, targets, outDir);
+    const batch = await captureSharedTabWidgets(page, targets, outDir, downloadDir);
     Object.assign(charts, batch);
   }
 
   for (const target of standalone) {
-    const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
     try {
-      let written = await screenshotWidgetCard(page, target, cardOut);
-      if (!written && clarityDockerMode && downloadDir) {
-        written = await downloadWidgetPng(page, downloadDir, target, cardOut);
-      }
-      charts[target.id] = written ? chartPathAbsolute(written) : null;
+      charts[target.id] = await captureWidgetCard(
+        page, target, outDir, downloadDir,
+      );
     } catch (err) {
       console.warn(`[card:${target.id}] screenshot failed: ${err.message}`);
       charts[target.id] = null;
@@ -1502,10 +1523,40 @@ async function captureAutoWidgetCards(page, cardTargets, outDir, downloadDir) {
   return charts;
 }
 
-async function downloadWidgetPng(page, downloadDir, target, outPath) {
-  const card = await prepareWidgetCard(page, target);
+async function downloadWidgetPng(page, downloadDir, target, outPath, existingCard = null) {
+  const card = existingCard || (await prepareWidgetCard(page, target));
   if (!card) {
     return null;
+  }
+
+  try {
+    await card.evaluate((el) => {
+      el.scrollIntoView({ behavior: "instant", block: "center" });
+    });
+  } catch (_) {
+    /* ignore */
+  }
+  await new Promise((r) => setTimeout(r, 900));
+
+  if (target.id === "devices" || target.id === "referrers") {
+    const tabLabels = tabLabelsForTarget(target);
+    const tabOpts = { exactTabMatch: Boolean(target.exactTabMatch) };
+    const active = await isTabActiveOnCard(
+      page,
+      card,
+      target.activeTab,
+      tabLabels.slice(1),
+    );
+    if (!active) {
+      await clickTabOnCard(
+        page,
+        card,
+        target.activeTab,
+        target.altActiveTabs || [],
+        tabOpts,
+      );
+      await new Promise((r) => setTimeout(r, 2800));
+    }
   }
 
   await dismissMenus(page);
@@ -1515,7 +1566,7 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
     console.warn(`[card:${target.id}] overflow menu (⋮) not found`);
     return null;
   }
-  await new Promise((r) => setTimeout(r, 600));
+  await new Promise((r) => setTimeout(r, 800));
 
   const dlClicked = await clickVisibleMenuItem(page, MENU_DOWNLOAD, true);
   if (!dlClicked) {
@@ -1523,7 +1574,7 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
     await dismissMenus(page);
     return null;
   }
-  await new Promise((r) => setTimeout(r, 700));
+  await new Promise((r) => setTimeout(r, 900));
 
   const sinceMs = Date.now();
   const pngClicked = await clickVisibleMenuItem(page, MENU_DOWNLOAD_PNG, false);
@@ -1535,7 +1586,8 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
     return null;
   }
 
-  const downloaded = await waitForDownloadedPng(downloadDir, sinceMs);
+  const downloadTimeout = clarityDockerMode ? 120_000 : 75_000;
+  const downloaded = await waitForDownloadedPng(downloadDir, sinceMs, downloadTimeout);
   await dismissMenus(page);
 
   if (!downloaded) {
@@ -1546,14 +1598,8 @@ async function downloadWidgetPng(page, downloadDir, target, outPath) {
   const classified = classifyPngFilename(path.basename(downloaded));
   if (classified && classified !== target.id) {
     console.warn(
-      `[card:${target.id}] download filename maps to ${classified}, rejecting`,
+      `[card:${target.id}] download filename suggests ${classified} — keeping for ${target.id}`,
     );
-    try {
-      fs.unlinkSync(downloaded);
-    } catch (_) {
-      /* ignore */
-    }
-    return null;
   }
 
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
