@@ -159,17 +159,20 @@ def reference_png_for_client(
     *,
     reference_path: Path | None = None,
 ) -> Path | None:
-    """Bundled fallback when browser capture fails (per-client asset)."""
+    """Bundled fiche PNG under ``scripts/clients/<client_id>/``."""
     if reference_path and reference_path.is_file():
         return reference_path
-    candidate = (
+    client_dir = (
         Path(__file__).resolve().parents[2]
         / "scripts"
         / "clients"
         / client_id
-        / "gmb_business_card_reference.png"
     )
-    return candidate if candidate.is_file() else None
+    for name in ("gmb_business_card.png", "gmb_business_card_reference.png"):
+        candidate = client_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _sync_gmb_ui_business_card(output_dir: Path, card_path: Path) -> None:
@@ -224,7 +227,8 @@ def apply_business_card_reference(
         logger.warning(
             "[gmb-card] reference file missing for %s (expected %s)",
             client_id,
-            reference_path or f"scripts/clients/{client_id}/gmb_business_card_reference.png",
+            reference_path
+            or f"scripts/clients/{client_id}/gmb_business_card.png",
         )
         return None
     target = output_dir / "gmb_business_card.png"

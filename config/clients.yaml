@@ -80,7 +80,7 @@ clients:
       ui_project_aliases:
         - "Digitify.fr"
         - "digitify.fr"
-      business_card_reference: scripts/clients/digitify/gmb_business_card_reference.png
+      business_card_reference: scripts/clients/digitify/gmb_business_card.png
     clarity:
       project_id: "wck8kvahx2"
       ui_skip_widgets:
@@ -155,7 +155,7 @@ clients:
         - "DeepCleaning"
         - "deepcleaning.fr"
         - "Lavage et nettoyage professionnel"
-      business_card_reference: scripts/clients/deepcleaning/gmb_business_card_reference.png
+      business_card_reference: scripts/clients/deepcleaning/gmb_business_card.png
     clarity:
       project_id: "lfjtuxge3c"
       # No e-commerce: skip Produits populaires widget + PPT column (Origincbd unchanged).
@@ -195,7 +195,7 @@ clients:
         - "Origine CBD"
         - "Origine Diffusion"
         - "75004"
-      business_card_reference: scripts/clients/origincbd/gmb_business_card_reference.png
+      business_card_reference: scripts/clients/origincbd/gmb_business_card.png
     clarity:
       project_id: "iqfjm1ewdj"
     delivery:

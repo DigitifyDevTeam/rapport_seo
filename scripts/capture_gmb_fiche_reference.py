@@ -1,10 +1,10 @@
-"""Capture a knowledge-panel screenshot for ``gmb_business_card_reference.png``.
+"""Capture a knowledge-panel screenshot for ``gmb_business_card.png``.
 
 Use in noVNC when automated headless capture fails (e.g. Origincbd):
 
     bash scripts/capture_gmb_fiche_reference.sh origincbd
 
-Saves to ``scripts/clients/<client>/gmb_business_card_reference.png``.
+Saves to ``scripts/clients/<client>/gmb_business_card.png``.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ def main() -> int:
 
     out_dir = ROOT / "scripts" / "clients" / client.id
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "gmb_business_card_reference.png"
+    out_path = out_dir / "gmb_business_card.png"
 
     profile = gmb_profile_dir(
         sessions,

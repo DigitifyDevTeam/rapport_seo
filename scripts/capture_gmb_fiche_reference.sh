@@ -3,7 +3,7 @@
 #
 #   bash scripts/capture_gmb_fiche_reference.sh origincbd
 #
-# Requires seo-vnc running. Opens Chrome in noVNC (--show).
+# Saves scripts/clients/<client>/gmb_business_card.png
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/gmb_vnc_common.sh
