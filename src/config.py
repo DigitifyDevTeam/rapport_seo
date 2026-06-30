@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,29 +181,79 @@ def gmb_ui_session_path(
     return own
 
 
+_AGENCY_CLARITY_CLIENT_IDS = (
+    "deepcleaning",
+    "origincbd",
+    "digitify",
+    "guivarche",
+    "cchabitat",
+)
+
+
+def _clarity_session_has_cookies(path: Path) -> bool:
+    """True when a saved session file contains at least one cookie."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+    cookies = raw.get("cookies")
+    return isinstance(cookies, list) and len(cookies) > 0
+
+
+def clarity_ui_session_candidates(
+    client: ClientConfig,
+    sessions_dir: Path | None = None,
+) -> list[Path]:
+    """Ordered Clarity session files to try (newest valid cookies first).
+
+    Agency clients share one Microsoft account — a fresh login for any client
+    should work for all projects. Stale per-client files are skipped when a
+    newer sibling session exists.
+    """
+    base = sessions_dir or (OUTPUTS_DIR / "_sessions")
+    ordered: list[Path] = []
+
+    shared = base / "clarity-shared.json"
+    if shared.is_file():
+        ordered.append(shared)
+
+    own = base / f"clarity-{client.id}.json"
+    ordered.append(own)
+
+    clarity_shared = str((client.clarity or {}).get("ui_session_client") or "").strip()
+    if clarity_shared:
+        ordered.append(base / f"clarity-{clarity_shared}.json")
+
+    gmb_shared = str((client.gmb or {}).get("ui_session_client") or "").strip()
+    if gmb_shared:
+        ordered.append(base / f"clarity-{gmb_shared}.json")
+
+    for client_id in _AGENCY_CLARITY_CLIENT_IDS:
+        ordered.append(base / f"clarity-{client_id}.json")
+
+    seen: set[Path] = set()
+    valid: list[Path] = []
+    for candidate in ordered:
+        if candidate in seen or not candidate.is_file():
+            continue
+        seen.add(candidate)
+        if _clarity_session_has_cookies(candidate):
+            valid.append(candidate)
+
+    valid.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return valid
+
+
 def clarity_ui_session_path(
     client: ClientConfig,
     sessions_dir: Path | None = None,
 ) -> Path:
-    """Prefer ``clarity-<client_id>.json``; reuse agency login when missing."""
+    """Best Clarity session for this client (newest agency login with cookies)."""
+    candidates = clarity_ui_session_candidates(client, sessions_dir)
+    if candidates:
+        return candidates[0]
     base = sessions_dir or (OUTPUTS_DIR / "_sessions")
-    own = base / f"clarity-{client.id}.json"
-    if own.is_file():
-        return own
-    fallbacks: list[str] = []
-    shared_gmb = str((client.gmb or {}).get("ui_session_client") or "").strip()
-    if shared_gmb:
-        fallbacks.append(shared_gmb)
-    fallbacks.extend(("deepcleaning", "origincbd", "digitify", "cchabitat"))
-    seen: set[str] = {client.id}
-    for client_id in fallbacks:
-        if not client_id or client_id in seen:
-            continue
-        seen.add(client_id)
-        candidate = base / f"clarity-{client_id}.json"
-        if candidate.is_file():
-            return candidate
-    return own
+    return base / f"clarity-{client.id}.json"
 
 
 def gmb_ui_session_owner(client: ClientConfig) -> str:

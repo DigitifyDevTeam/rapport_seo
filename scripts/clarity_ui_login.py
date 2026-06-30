@@ -25,6 +25,29 @@ from playwright.sync_api import Error as PlaywrightError, sync_playwright
 from scripts.gmb_ui_login import launch_gmb_persistent_context, unlock_chrome_profile
 from scripts.playwright_browser import chromium_vnc_launch_kwargs, in_vnc
 
+_AGENCY_CLARITY_SYNC_IDS = (
+    "deepcleaning",
+    "origincbd",
+    "digitify",
+    "guivarche",
+    "cchabitat",
+)
+
+
+def _propagate_clarity_session(sessions_dir: Path, payload: dict, source: Path) -> None:
+    """Copy one agency login to all Clarity session files (same Microsoft account)."""
+    text = json.dumps(payload, indent=2)
+    (sessions_dir / "clarity-shared.json").write_text(text, encoding="utf-8")
+    for client_id in _AGENCY_CLARITY_SYNC_IDS:
+        target = sessions_dir / f"clarity-{client_id}.json"
+        if target.resolve() == source.resolve():
+            continue
+        target.write_text(text, encoding="utf-8")
+    print(
+        "Synced Clarity cookies to clarity-shared.json and agency client sessions.",
+        flush=True,
+    )
+
 
 def _launch_clarity_context(pw, profile: Path, launch_kw: dict):
     """Ephemeral browser in noVNC (avoids crashpad/user-data-dir issues); profile optional elsewhere."""
@@ -124,6 +147,7 @@ def main() -> int:
         storage = _storage_snapshot(page)
         payload = {"cookies": cookies, "storage": storage, "url": url}
         out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _propagate_clarity_session(out_path.parent, payload, out_path)
         print(f"Saved session to {out_path}")
         print(f"Captured dashboard URL: {url}")
         browser = getattr(context, "_ephemeral_browser", None)

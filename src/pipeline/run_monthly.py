@@ -40,6 +40,7 @@ import pandas as pd
 
 from src.charts import generate as charts
 from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
+                          clarity_ui_session_candidates,
                           clarity_ui_session_path, get_client,
                           gmb_ui_session_owner, gmb_ui_session_path,
                           resolve_google_chrome_profile,
@@ -582,10 +583,16 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
                 except OSError:
                     pass
 
-    session_path = clarity_ui_session_path(client, _CLARITY_UI_SESSIONS_DIR)
-    logger.info("[clarity-ui] session path=%s  exists=%s",
-                session_path, session_path.exists())
-    if not session_path.exists():
+    session_candidates = clarity_ui_session_candidates(client, _CLARITY_UI_SESSIONS_DIR)
+    session_path = session_candidates[0] if session_candidates else (
+        _CLARITY_UI_SESSIONS_DIR / f"clarity-{client.id}.json"
+    )
+    logger.info(
+        "[clarity-ui] session candidates=%s  using=%s",
+        [p.name for p in session_candidates],
+        session_path.name if session_path.exists() else session_path,
+    )
+    if not session_candidates:
         logger.warning(
             "[clarity-ui] no saved session at %s — widget PNGs need a Windows "
             "capture or copy outputs/%s/%s/clarity_* from your PC. Text metrics "
@@ -606,59 +613,80 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         return
 
     screenshot = output_dir / "clarity_dashboard.png"
-    cmd = [
-        node_bin,
-        str(_CLARITY_UI_EXTRACT_SCRIPT),
-        "--session", str(session_path),
-        "--out", str(json_out),
-        "--screenshot", str(screenshot),
-        "--period-start", period.start.isoformat(),
-        "--period-end", period.end.isoformat(),
-    ]
     project_id = ((client.clarity or {}).get("project_id") or "").strip()
-    if project_id:
-        cmd.extend(["--project-id", project_id])
     skip_widgets = (client.clarity or {}).get("ui_skip_widgets") or []
-    if skip_widgets:
-        cmd.extend([
-            "--skip-widgets",
-            ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
-        ])
-    # Session JSON holds cookies; Chrome profile often crashes in Docker (crashpad).
-    # Headless capture always uses cookies from the session file, not userDataDir.
-
     if refresh:
-        cmd.extend(["--record", "--show", "--record-timeout", "900"])
         logger.info(
             "[clarity-ui] record mode for %s — export 4 widgets in the browser",
             client.id,
         )
         timeout = 960
     else:
-        cmd.append("--auto")
         logger.info(
             "[clarity-ui] capturing dashboard for %s → %s (auto mode)",
             client.id, output_dir,
         )
         timeout = 420
 
-    logger.info("[clarity-ui] cmd: %s", " ".join(str(c) for c in cmd))
     capture_env = {**os.environ, "SEO_REPORT_DOCKER": "1"}
-    try:
-        result = subprocess.run(
-            cmd,
-            timeout=timeout,
-            check=False,
-            capture_output=True,
-            text=True,
-            env=capture_env,
-        )
+    result: subprocess.CompletedProcess[str] | None = None
+    for attempt, try_session in enumerate(session_candidates, start=1):
+        cmd = [
+            node_bin,
+            str(_CLARITY_UI_EXTRACT_SCRIPT),
+            "--session", str(try_session),
+            "--out", str(json_out),
+            "--screenshot", str(screenshot),
+            "--period-start", period.start.isoformat(),
+            "--period-end", period.end.isoformat(),
+        ]
+        if project_id:
+            cmd.extend(["--project-id", project_id])
+        if skip_widgets:
+            cmd.extend([
+                "--skip-widgets",
+                ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
+            ])
+        if refresh:
+            cmd.extend(["--record", "--show", "--record-timeout", "900"])
+        else:
+            cmd.append("--auto")
+
+        if attempt > 1:
+            logger.info(
+                "[clarity-ui] retrying with alternate session %s",
+                try_session.name,
+            )
+        logger.info("[clarity-ui] cmd: %s", " ".join(str(c) for c in cmd))
+        try:
+            result = subprocess.run(
+                cmd,
+                timeout=timeout,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=capture_env,
+            )
+        except (FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.warning("[clarity-ui] capture failed: %s", exc)
+            return
+
         if result.stdout:
             logger.info("[clarity-ui] stdout:\n%s", result.stdout[-2000:])
         if result.stderr:
             logger.info("[clarity-ui] stderr:\n%s", result.stderr[-2000:])
-    except (FileNotFoundError, subprocess.SubprocessError) as exc:
-        logger.warning("[clarity-ui] capture failed: %s", exc)
+
+        if result.returncode == 0:
+            break
+        if result.returncode == 2 and attempt < len(session_candidates):
+            logger.warning(
+                "[clarity-ui] session %s rejected (sign-in) — trying next",
+                try_session.name,
+            )
+            continue
+        break
+
+    if result is None:
         return
 
     if result.returncode != 0:
@@ -687,9 +715,30 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             period,
         )
         logger.info("[clarity-ui] retrying capture once (extended wait)")
+        retry_session = session_candidates[0]
+        retry_cmd = [
+            node_bin,
+            str(_CLARITY_UI_EXTRACT_SCRIPT),
+            "--session", str(retry_session),
+            "--out", str(json_out),
+            "--screenshot", str(screenshot),
+            "--period-start", period.start.isoformat(),
+            "--period-end", period.end.isoformat(),
+        ]
+        if project_id:
+            retry_cmd.extend(["--project-id", project_id])
+        if skip_widgets:
+            retry_cmd.extend([
+                "--skip-widgets",
+                ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
+            ])
+        if refresh:
+            retry_cmd.extend(["--record", "--show", "--record-timeout", "900"])
+        else:
+            retry_cmd.append("--auto")
         try:
             retry = subprocess.run(
-                cmd,
+                retry_cmd,
                 timeout=timeout + 120,
                 check=False,
                 capture_output=True,
