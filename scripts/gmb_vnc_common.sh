@@ -43,9 +43,14 @@ gmb_vnc_warn_missing_master() {
 }
 
 gmb_vnc_docker_exec() {
+  # docker compose exec does not re-run entrypoint — set writable HOME for Chromium crashpad.
   docker compose --profile tools exec -it \
     -u "$(id -u):$(id -g)" \
     -e DISPLAY="${GMB_VNC_DISPLAY}" \
+    -e HOME=/tmp \
+    -e XDG_CONFIG_HOME=/tmp/.config \
+    -e XDG_CACHE_HOME=/tmp/.cache \
+    -e TMPDIR=/tmp \
     -e PYTHONPATH=/app \
     -e SEO_REPORT_VNC=1 \
     -e SEO_REPORT_DOCKER=1 \

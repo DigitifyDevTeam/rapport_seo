@@ -59,6 +59,18 @@ function puppeteerLaunchOptions(base = {}) {
       }
     }
   }
+  if (dockerMode || vncMode) {
+    for (const flag of [
+      "--disable-breakpad",
+      "--disable-crash-reporter",
+      "--disable-features=Crashpad,TranslateUI",
+      "--crash-dumps-dir=/tmp/chrome-crashpad",
+    ]) {
+      if (!args.includes(flag)) {
+        args.push(flag);
+      }
+    }
+  }
   if (vncMode) {
     for (const flag of [
       "--disable-gpu",
@@ -66,7 +78,6 @@ function puppeteerLaunchOptions(base = {}) {
       "--use-gl=swiftshader",
       "--no-first-run",
       "--no-default-browser-check",
-      "--disable-breakpad",
     ]) {
       if (!args.includes(flag)) {
         args.push(flag);

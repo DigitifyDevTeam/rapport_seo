@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:
 
 from playwright.sync_api import Browser, BrowserContext, Error as PlaywrightError, Page, sync_playwright
 
-from scripts.playwright_browser import docker_chromium_args
+from scripts.playwright_browser import chromium_vnc_launch_kwargs, docker_chromium_args, in_vnc
 
 PERF_URL_MARKERS = ("#mpd=", "promote/performance", "/performance")
 SIGNIN_MARKERS = (
@@ -88,7 +88,7 @@ def unlock_chrome_profile(profile: Path) -> None:
 
 
 def launch_gmb_persistent_context(pw, profile: Path, launch_kw: dict) -> BrowserContext:
-    """Launch Chromium; on crash (common with Windows profile copies), retry fresh."""
+    """Launch Chromium; on crash (common with Windows profile copies), retry fresh or ephemeral."""
     unlock_chrome_profile(profile)
 
     def _launch() -> BrowserContext:
@@ -99,11 +99,23 @@ def launch_gmb_persistent_context(pw, profile: Path, launch_kw: dict) -> Browser
             **launch_kw,
         )
 
+    def _launch_ephemeral() -> BrowserContext:
+        print("Falling back to ephemeral Chromium (no user-data-dir).", file=sys.stderr)
+        browser = pw.chromium.launch(**launch_kw)
+        context = browser.new_context(
+            viewport={"width": 1600, "height": 900},
+            locale="fr-FR",
+        )
+        context._ephemeral_browser = browser  # noqa: SLF001
+        return context
+
     try:
         return _launch()
     except PlaywrightError as exc:
         err = str(exc).lower()
         if "target" not in err or "closed" not in err or not profile.is_dir():
+            if in_vnc():
+                return _launch_ephemeral()
             raise
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup = profile.with_name(f"{profile.name}.corrupt-{stamp}")
@@ -119,7 +131,12 @@ def launch_gmb_persistent_context(pw, profile: Path, launch_kw: dict) -> Browser
         profile.rename(backup)
         profile.mkdir(parents=True)
         unlock_chrome_profile(profile)
-        return _launch()
+        try:
+            return _launch()
+        except PlaywrightError:
+            if in_vnc():
+                return _launch_ephemeral()
+            raise
 
 
 def _is_signin_url(url: str) -> bool:
@@ -305,13 +322,10 @@ def main() -> int:
             print(f"Using profile: {profile}")
 
         channel = _resolve_browser_channel(args.channel)
-        browser_args = docker_chromium_args()
-        launch_kw = dict(
-            headless=False,
+        launch_kw = chromium_vnc_launch_kwargs(
             channel=channel,
-            ignore_default_args=["--enable-automation"],
             args=[
-                *browser_args,
+                *docker_chromium_args(),
                 "--disable-infobars",
             ],
         )
@@ -364,15 +378,21 @@ def main() -> int:
             ):
                 print(f"\n  OK — {reason}")
                 rc = _save_session(context, perf_page, out_path)
+                ephemeral = getattr(context, "_ephemeral_browser", None)
                 context.close()
-                if browser:
+                if ephemeral:
+                    ephemeral.close()
+                elif browser:
                     browser.close()
                 return rc
 
             if args.force_save and perf_page and not _is_signin_url(perf_url):
                 rc = _save_session(context, perf_page, out_path, force=True)
+                ephemeral = getattr(context, "_ephemeral_browser", None)
                 context.close()
-                if browser:
+                if ephemeral:
+                    ephemeral.close()
+                elif browser:
                     browser.close()
                 return rc
 

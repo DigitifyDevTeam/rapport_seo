@@ -29,7 +29,7 @@ gmb_vnc_ensure
 mkdir -p "${PROFILE}" 2>/dev/null || true
 
 echo "=== Clarity login for ${CLIENT} ==="
-echo "1) Chrome opens in noVNC."
+echo "1) Chrome opens in noVNC (ephemeral — no Chrome profile needed)."
 echo "2) Sign in to Microsoft Clarity if asked."
 echo "3) Wait for the project dashboard + KPI cards."
 echo "4) Press ENTER in this SSH terminal."

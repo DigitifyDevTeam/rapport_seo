@@ -624,10 +624,8 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             "--skip-widgets",
             ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
         ])
-    clarity_profile = _CLARITY_UI_SESSIONS_DIR / "chrome-profile-clarity"
-    if clarity_profile.is_dir():
-        cmd.extend(["--profile", str(clarity_profile)])
-        logger.info("[clarity-ui] using Chrome profile %s", clarity_profile.name)
+    # Session JSON holds cookies; Chrome profile often crashes in Docker (crashpad).
+    # Headless capture always uses cookies from the session file, not userDataDir.
 
     if refresh:
         cmd.extend(["--record", "--show", "--record-timeout", "900"])

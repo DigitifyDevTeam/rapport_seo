@@ -21,8 +21,13 @@ fi
 docker compose --profile tools exec -it \
   -u "$(id -u):$(id -g)" \
   -e DISPLAY="${VNC_DISPLAY}" \
+  -e HOME=/tmp \
+  -e XDG_CONFIG_HOME=/tmp/.config \
+  -e XDG_CACHE_HOME=/tmp/.cache \
+  -e TMPDIR=/tmp \
   -e PYTHONPATH=/app \
   -e SEO_REPORT_VNC=1 \
+  -e SEO_REPORT_DOCKER=1 \
   -e SEO_REPORT_GMB_PROFILE="${VPS_PROFILE}" \
   seo-vnc \
   bash
