@@ -145,6 +145,11 @@ clients:
       ui_prefer_gmb_app: true
       ui_project_name: "Deep Cleaning"
       ui_search_query: "Deep Cleaning Lavage et nettoyage professionnel Colombes"
+      ui_fiche_match:
+        - deepcleaning.fr
+        - "Deep Cleaning"
+        - "Lavage et nettoyage"
+        - Colombes
       ui_project_aliases:
         - "DeepCleaning"
         - "deepcleaning.fr"

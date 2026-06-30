@@ -13,7 +13,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -23,11 +22,11 @@ from playwright.sync_api import sync_playwright
 from scripts.gmb_ui_extract import (
     _default_query,
     _launch_browser_context,
-    _resolve_listing_cid,
     screenshot_public_fiche,
 )
 from scripts.playwright_browser import gmb_profile_dir
 from src.config import get_client, gmb_ui_session_path
+from src.gmb.listing_cid import resolve_listing_cid
 from src.reporting.gmb_business_card import is_valid_public_fiche_png
 
 
@@ -79,12 +78,10 @@ def main() -> int:
         sessions,
         fallback=str(sessions / f"chrome-profile-gmb-{client.id}"),
     )
-    listing_cid = (gmb_cfg.get("ui_listing_cid") or "").strip()
-    if not listing_cid:
-        listing_cid = _resolve_listing_cid(
-            SimpleNamespace(listing_cid=""),
-            perf_url,
-        )
+    listing_cid = resolve_listing_cid(
+        str(gmb_cfg.get("ui_listing_cid") or ""),
+        perf_url,
+    )
 
     launch_args = SimpleNamespace(
         profile=str(profile) if profile.is_dir() else "",

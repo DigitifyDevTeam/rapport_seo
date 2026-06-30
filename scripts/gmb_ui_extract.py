@@ -57,6 +57,7 @@ from playwright.sync_api import (Frame, Page,
                                   sync_playwright)
 
 from scripts.gmb_ui_login import unlock_chrome_profile
+from src.gmb.listing_cid import extract_listing_cid, resolve_listing_cid
 
 
 TAB_TARGETS: list[dict[str, Any]] = [
@@ -74,7 +75,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v7-fiche-maps-v2"
+GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
 
 # Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
 _BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
@@ -239,6 +240,11 @@ def _parse_args() -> argparse.Namespace:
         help="Google Business listing CID for Maps place capture "
              "(e.g. 10914996429078932281 from #mpd= URL).",
     )
+    parser.add_argument(
+        "--fiche-only",
+        action="store_true",
+        help="Only capture gmb_business_card.png (skip Performance KPIs).",
+    )
     return parser.parse_args()
 
 
@@ -303,29 +309,12 @@ def _discover_performance_url(page: Page) -> str:
 
 
 def _extract_listing_cid(*urls: str) -> str:
-    """Parse Google Business listing CID from Performance / Search URLs."""
-    patterns = (
-        r"#mpd=~(\d+)",
-        r"/business/(\d+)/",
-        r"[?&]cid=(\d+)",
-        r"knm=(\d+)",
-    )
-    for raw in urls:
-        text = (raw or "").strip()
-        if not text:
-            continue
-        for pat in patterns:
-            match = re.search(pat, text)
-            if match:
-                return match.group(1)
-    return ""
+    return extract_listing_cid(*urls)
 
 
 def _resolve_listing_cid(args: argparse.Namespace, *extra_urls: str) -> str:
-    explicit = (getattr(args, "listing_cid", None) or "").strip()
-    if explicit:
-        return explicit
-    return _extract_listing_cid(
+    return resolve_listing_cid(
+        getattr(args, "listing_cid", "") or "",
         *(extra_urls or ()),
         getattr(args, "dashboard_url", "") or "",
     )
@@ -2488,6 +2477,70 @@ def _launch_browser_context(pw, args: argparse.Namespace,
     return context, browser, page
 
 
+def _run_fiche_only_capture(
+    args: argparse.Namespace,
+    *,
+    page: Page,
+    context: Any,
+    browser: Any | None,
+    out_path: Path,
+    out_dir: Path,
+    saved_url: str,
+    session_path: Path,
+) -> int:
+    """Capture only ``gmb_business_card.png`` (Maps CID / Search / Maps search)."""
+    search_query = "" if args.no_search else (
+        _default_query(args.business_name, args.location_name)
+        or _resolve_project_name(args)
+    )
+    client_id = (args.client_id or "").strip()
+    client_perf_url = _load_client_performance_url(client_id, session_path)
+    dash_url = (args.dashboard_url or "").strip() or client_perf_url or saved_url
+    listing_cid = _resolve_listing_cid(
+        args, dash_url, saved_url, client_perf_url,
+    )
+    business_card_out = out_dir / "gmb_business_card.png"
+    if business_card_out.is_file() and not _validate_saved_public_fiche(business_card_out):
+        try:
+            business_card_out.unlink()
+        except OSError:
+            pass
+    fiche_hints = _fiche_match_hints(args)
+    _log("fiche-only: public fiche screenshot")
+    shot = screenshot_public_fiche(
+        page,
+        business_card_out,
+        search_query=search_query,
+        fiche_match=fiche_hints,
+        listing_cid=listing_cid,
+    )
+    gmb_ui: dict[str, Any] = {}
+    if out_path.is_file():
+        try:
+            gmb_ui = json.loads(out_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            gmb_ui = {}
+    charts = gmb_ui.get("charts") or {}
+    if shot:
+        charts["business_card"] = str(business_card_out.resolve())
+    gmb_ui["charts"] = charts
+    _safe_write_text(out_path, json.dumps(gmb_ui, indent=2))
+    try:
+        context.close()
+    except Exception:
+        pass
+    if browser is not None:
+        try:
+            browser.close()
+        except Exception:
+            pass
+    if shot:
+        print(f"Wrote {business_card_out}")
+        return 0
+    print("fiche-only: capture failed", file=sys.stderr)
+    return 1
+
+
 def main() -> int:
     args = _parse_args()
     session_path = Path(args.session).resolve()
@@ -2527,6 +2580,18 @@ def main() -> int:
 
     with sync_playwright() as pw:
         context, browser, page = _launch_browser_context(pw, args, storage_state)
+
+        if args.fiche_only:
+            return _run_fiche_only_capture(
+                args,
+                page=page,
+                context=context,
+                browser=browser,
+                out_path=out_path,
+                out_dir=out_dir,
+                saved_url=saved_url,
+                session_path=session_path,
+            )
 
         if args.manual:
             dash_url = (args.dashboard_url or "").strip() or saved_url
@@ -2853,7 +2918,9 @@ def main() -> int:
 
         # 6) Public fiche (after Performance KPIs — Maps must not block overlay).
         fiche_hints = _fiche_match_hints(args)
-        if not charts.get("business_card") and not args.no_search and search_query:
+        if not charts.get("business_card") and (
+            listing_cid or (not args.no_search and search_query)
+        ):
             card_page = page if _page_alive(page) else dashboard_page
             if card_page is not None:
                 if business_card_out.is_file() and not _validate_saved_public_fiche(

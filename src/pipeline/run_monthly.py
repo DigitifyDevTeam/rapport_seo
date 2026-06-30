@@ -45,6 +45,7 @@ from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
                           load_clients)
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
+from src.gmb.listing_cid import resolve_listing_cid
 from src.gmb.performance_url import (report_calendar_month_bounds,
                                      rewrite_performance_url_month)
 from src.insights import generator as insights
@@ -66,7 +67,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v7-fiche-maps-v2"
+GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
 CLARITY_UI_CAPTURE_VERSION = "hidpi-v2"
@@ -1527,9 +1528,6 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     ]
     if fiche_hints:
         cmd.extend(["--fiche-match", ",".join(fiche_hints)])
-    listing_cid = (gmb_cfg.get("ui_listing_cid") or "").strip()
-    if listing_cid:
-        cmd.extend(["--listing-cid", listing_cid])
     session_owner = gmb_ui_session_owner(client)
     using_foreign_session = session_owner != client.id
     perf_url = ""
@@ -1543,6 +1541,15 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
             ).strip()
         except (OSError, json.JSONDecodeError):
             dash_from_session = ""
+    listing_cid = resolve_listing_cid(
+        str(gmb_cfg.get("ui_listing_cid") or ""),
+        perf_url,
+        dash_from_session,
+        perf_sidecar,
+    )
+    if listing_cid:
+        cmd.extend(["--listing-cid", listing_cid])
+        logger.info("[gmb-ui] listing CID %s for %s", listing_cid, client.id)
     period_end_iso = period.end.isoformat() if period else ""
     if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
         perf_url = rewrite_performance_url_month(
@@ -1630,6 +1637,144 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         json_out,
     )
     return False
+
+
+def _capture_gmb_fiche_if_missing(
+    client: ClientConfig,
+    output_dir: Path,
+    period: Period | None,
+) -> None:
+    """Retry only the public fiche screenshot when KPI capture succeeded without it."""
+    card = output_dir / "gmb_business_card.png"
+    if card.is_file() and is_valid_public_fiche_png(card):
+        return
+    if "gmb" in _ui_capture_disabled(client):
+        return
+    session_path = gmb_ui_session_path(client, _GMB_UI_SESSIONS_DIR)
+    if not session_path.is_file() or not _GMB_UI_EXTRACT_SCRIPT.is_file():
+        return
+
+    gmb_cfg = getattr(client, "gmb", None) or {}
+    location_name = (
+        gmb_cfg.get("ui_location_name")
+        or gmb_cfg.get("location_name")
+        or client.website.replace("https://", "").replace("http://", "")
+                                                  .rstrip("/")
+        or client.id
+    )
+    project_name = (
+        gmb_cfg.get("ui_project_name")
+        or gmb_cfg.get("project_name")
+        or client.name
+        or client.id
+    )
+    no_search = bool(gmb_cfg.get("ui_no_search"))
+    search_query = (
+        (gmb_cfg.get("ui_search_query") or "").strip()
+        or ("" if no_search else None)
+        or location_name
+        or project_name
+    )
+    profile_dir = _gmb_ui_profile_dir(client)
+    no_profile = (env("SEO_REPORT_GMB_NO_PROFILE") or "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    channel = (env("SEO_REPORT_BROWSER_CHANNEL") or "").strip()
+    json_out = output_dir / "gmb_ui.json"
+    perf_url_file = _GMB_UI_SESSIONS_DIR / f"gmb-performance-{client.id}.txt"
+    perf_url = ""
+    if perf_url_file.is_file():
+        perf_url = perf_url_file.read_text(encoding="utf-8").strip()
+    perf_sidecar = perf_url
+    dash_from_session = ""
+    try:
+        dash_from_session = str(
+            json.loads(session_path.read_text(encoding="utf-8")).get("url") or "",
+        ).strip()
+    except (OSError, json.JSONDecodeError):
+        dash_from_session = ""
+    listing_cid = resolve_listing_cid(
+        str(gmb_cfg.get("ui_listing_cid") or ""),
+        perf_url,
+        dash_from_session,
+        perf_sidecar,
+    )
+    if not listing_cid and not search_query and no_search:
+        logger.warning(
+            "[gmb-ui] fiche-only skipped for %s — no listing CID or search query",
+            client.id,
+        )
+        return
+
+    cmd = [
+        "python",
+        str(_GMB_UI_EXTRACT_SCRIPT),
+        "--session", str(session_path),
+        "--out", str(json_out),
+        "--project-name", project_name,
+        "--client-id", client.id,
+        "--fiche-only",
+    ]
+    if channel:
+        cmd += ["--channel", channel]
+    if not no_search:
+        cmd.extend(["--business-name", search_query, "--location-name", location_name])
+    if not no_profile and profile_dir.is_dir():
+        cmd += ["--profile", str(profile_dir)]
+    if period is not None:
+        cmd += [
+            "--no-auto-period",
+            "--period-start", period.start.isoformat(),
+            "--period-end", period.end.isoformat(),
+        ]
+    if no_search:
+        cmd.append("--no-search")
+    fiche_match = gmb_cfg.get("ui_fiche_match") or []
+    if isinstance(fiche_match, str):
+        fiche_match = [fiche_match]
+    fiche_hints = [str(item).strip() for item in fiche_match if str(item).strip()]
+    if fiche_hints:
+        cmd.extend(["--fiche-match", ",".join(fiche_hints)])
+    if listing_cid:
+        cmd.extend(["--listing-cid", listing_cid])
+    session_owner = gmb_ui_session_owner(client)
+    using_foreign_session = session_owner != client.id
+    period_end_iso = period.end.isoformat() if period else ""
+    if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
+        perf_url = rewrite_performance_url_month(
+            perf_url,
+            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        ) if period else perf_url
+        cmd.extend(["--dashboard-url", perf_url])
+    elif (
+        not using_foreign_session
+        and dash_from_session
+        and ("#mpd=" in dash_from_session or "promote/performance" in dash_from_session)
+    ):
+        dash_from_session = rewrite_performance_url_month(
+            dash_from_session,
+            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        ) if period else dash_from_session
+        cmd.extend(["--dashboard-url", dash_from_session])
+
+    logger.info("[gmb-ui] fiche-only retry for %s", client.id)
+    logger.info("[gmb-ui] cmd: %s", " ".join(str(c) for c in cmd))
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True,
+                                timeout=180, check=False)
+    except (FileNotFoundError, subprocess.SubprocessError) as exc:
+        logger.warning("[gmb-ui] fiche-only failed: %s", exc)
+        return
+    if result.stderr:
+        logger.info("[gmb-ui] fiche-only stderr:\n%s", result.stderr[-1500:])
+    for line in (result.stdout or "").splitlines():
+        line = line.strip()
+        if line:
+            logger.info("[gmb-ui] %s", line)
+    if card.is_file() and is_valid_public_fiche_png(card):
+        logger.info("[gmb-ui] fiche-only saved valid business card for %s", client.id)
+    else:
+        logger.warning("[gmb-ui] fiche-only did not produce a valid business card")
 
 
 def _resolve_gmb_ui_chart(gmb_ui: dict[str, Any] | None,
@@ -1780,6 +1925,7 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     )
     if "gmb" not in _ui_capture_disabled(client):
         _capture_gmb_ui(client, output_dir, period)
+        _capture_gmb_fiche_if_missing(client, output_dir, period)
     gmb_cfg = client.gmb or {}
     ref_raw = (gmb_cfg.get("business_card_reference") or "").strip()
     ref_path = Path(ref_raw) if ref_raw else None

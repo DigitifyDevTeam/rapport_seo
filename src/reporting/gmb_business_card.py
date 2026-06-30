@@ -49,6 +49,13 @@ _PANEL_MARKERS = (
     "téléphone",
     "boutique",
     "magasin de cbd",
+    "nettoyage",
+    "deep cleaning",
+    "lavage",
+    "canapé",
+    "canape",
+    "matelas",
+    "tapis",
 )
 
 
@@ -67,6 +74,10 @@ def _is_maps_placeholder(text: str) -> bool:
         "75004",
         "7500",
         "digitify",
+        "deep cleaning",
+        "deepcleaning",
+        "nettoyage",
+        "colombes",
         "téléphone",
         "adresse",
     )
@@ -119,6 +130,9 @@ def is_valid_public_fiche_png(path: Path) -> bool:
         return False
     if panel_hits >= 2:
         return True
+    if panel_hits >= 1 and organic_hits == 0 and pack_hits == 0:
+        if _looks_like_panel_by_shape(path):
+            return True
     # Multiple "Site Web" / "Ouvert" lines usually means a results list, not one panel.
     if text.count("site web") >= 2 or text.count("ouvert") >= 2:
         logger.info(
@@ -130,6 +144,8 @@ def is_valid_public_fiche_png(path: Path) -> bool:
         return panel_hits >= 1
     if "digitify" in text and panel_hits >= 1:
         return True
+    if "deep cleaning" in text or "deepcleaning" in text:
+        return panel_hits >= 1 or _looks_like_panel_by_shape(path)
     logger.info(
         "[gmb-card] %s: insufficient panel signals (panel=%d)",
         path.name, panel_hits,
