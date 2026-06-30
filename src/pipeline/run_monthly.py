@@ -162,6 +162,58 @@ def _set_runtime_refresh_clarity(refresh: bool) -> None:
     _RUNTIME_REFRESH_CLARITY = refresh
 
 
+def _clarity_ui_docker_mode() -> bool:
+    return str(os.environ.get("SEO_REPORT_DOCKER", "")).lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _clarity_ui_record_mode(*, refresh: bool) -> bool:
+    """Manual Clarity export (needs a display). Disabled in Docker batch runs."""
+    if _clarity_ui_docker_mode():
+        return False
+    if str(os.environ.get("SEO_REPORT_CLARITY_RECORD", "")).lower() in (
+        "1", "true", "yes", "on",
+    ):
+        return True
+    return bool(refresh and os.environ.get("DISPLAY"))
+
+
+def _clarity_extract_argv(
+    *,
+    node_bin: str,
+    session: Path,
+    json_out: Path,
+    screenshot: Path,
+    period: Period,
+    project_id: str,
+    skip_widgets: list[str],
+    refresh: bool,
+) -> list[str]:
+    """Build ``clarity_ui_extract.js`` argv (auto headless in Docker)."""
+    cmd = [
+        node_bin,
+        str(_CLARITY_UI_EXTRACT_SCRIPT),
+        "--session", str(session),
+        "--out", str(json_out),
+        "--screenshot", str(screenshot),
+        "--period-start", period.start.isoformat(),
+        "--period-end", period.end.isoformat(),
+    ]
+    if project_id:
+        cmd.extend(["--project-id", project_id])
+    if skip_widgets:
+        cmd.extend([
+            "--skip-widgets",
+            ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
+        ])
+    if _clarity_ui_record_mode(refresh=refresh):
+        cmd.extend(["--record", "--show", "--record-timeout", "900"])
+    else:
+        cmd.append("--auto")
+    return cmd
+
+
 def _set_runtime_skip(skip_csv: str | None) -> None:
     _RUNTIME_SKIP.clear()
     if not skip_csv:
@@ -660,11 +712,18 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     screenshot = output_dir / "clarity_dashboard.png"
     project_id = ((client.clarity or {}).get("project_id") or "").strip()
     skip_widgets = (client.clarity or {}).get("ui_skip_widgets") or []
+    use_record = _clarity_ui_record_mode(refresh=refresh)
     if refresh:
-        logger.info(
-            "[clarity-ui] record mode for %s — export 4 widgets in the browser",
-            client.id,
-        )
+        if use_record:
+            logger.info(
+                "[clarity-ui] record mode for %s — export widgets in the browser",
+                client.id,
+            )
+        else:
+            logger.info(
+                "[clarity-ui] forcing headless re-capture for %s → %s",
+                client.id, output_dir,
+            )
         timeout = 960
     else:
         logger.info(
@@ -676,26 +735,16 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     capture_env = {**os.environ, "SEO_REPORT_DOCKER": "1"}
     result: subprocess.CompletedProcess[str] | None = None
     for attempt, try_session in enumerate(session_candidates, start=1):
-        cmd = [
-            node_bin,
-            str(_CLARITY_UI_EXTRACT_SCRIPT),
-            "--session", str(try_session),
-            "--out", str(json_out),
-            "--screenshot", str(screenshot),
-            "--period-start", period.start.isoformat(),
-            "--period-end", period.end.isoformat(),
-        ]
-        if project_id:
-            cmd.extend(["--project-id", project_id])
-        if skip_widgets:
-            cmd.extend([
-                "--skip-widgets",
-                ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
-            ])
-        if refresh:
-            cmd.extend(["--record", "--show", "--record-timeout", "900"])
-        else:
-            cmd.append("--auto")
+        cmd = _clarity_extract_argv(
+            node_bin=node_bin,
+            session=try_session,
+            json_out=json_out,
+            screenshot=screenshot,
+            period=period,
+            project_id=project_id,
+            skip_widgets=skip_widgets,
+            refresh=refresh,
+        )
 
         if attempt > 1:
             logger.info(
@@ -755,32 +804,22 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
     if not _clarity_capture_complete(client, output_dir, period):
         logger.warning(
             "[clarity-ui] capture finished but widget PNGs are still "
-            "missing for %s. Re-run with --refresh-clarity to export "
-            "manually in the browser.",
+            "missing for %s. Check Clarity session (VNC login) or dashboard "
+            "widgets (Appareils / Référents).",
             period,
         )
         logger.info("[clarity-ui] retrying capture once (extended wait)")
         retry_session = session_candidates[0]
-        retry_cmd = [
-            node_bin,
-            str(_CLARITY_UI_EXTRACT_SCRIPT),
-            "--session", str(retry_session),
-            "--out", str(json_out),
-            "--screenshot", str(screenshot),
-            "--period-start", period.start.isoformat(),
-            "--period-end", period.end.isoformat(),
-        ]
-        if project_id:
-            retry_cmd.extend(["--project-id", project_id])
-        if skip_widgets:
-            retry_cmd.extend([
-                "--skip-widgets",
-                ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
-            ])
-        if refresh:
-            retry_cmd.extend(["--record", "--show", "--record-timeout", "900"])
-        else:
-            retry_cmd.append("--auto")
+        retry_cmd = _clarity_extract_argv(
+            node_bin=node_bin,
+            session=retry_session,
+            json_out=json_out,
+            screenshot=screenshot,
+            period=period,
+            project_id=project_id,
+            skip_widgets=skip_widgets,
+            refresh=False,
+        )
         try:
             retry = subprocess.run(
                 retry_cmd,
@@ -2213,8 +2252,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--refresh-clarity",
         action="store_true",
-        help="Re-open Clarity in the browser to export widget PNGs "
-             "(default: reuse clarity_card_*.png already in the output folder).",
+        help="Force a new Clarity dashboard capture (headless auto in Docker; "
+             "interactive export only on a machine with a display).",
     )
     parser.add_argument(
         "--refresh-ga4",

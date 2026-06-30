@@ -429,11 +429,12 @@ class ReportBuilder:
 
     def _replace_with_image(self, slide, shape, image_path: Any, *,
                             placeholder_name: str = "") -> None:
-        if not image_path:
-            return
-        path = Path(image_path)
-        if not path.exists():
-            logger.warning("chart image not found: %s", path)
+        path = Path(image_path) if image_path else None
+        if not path or not path.exists():
+            if image_path and not path.exists():
+                logger.warning("chart image not found: %s", path)
+            if placeholder_name.startswith("chart_"):
+                self._set_text_frame(shape.text_frame, "")
             return
         left, top, width, height = (shape.left, shape.top, shape.width,
                                       shape.height)

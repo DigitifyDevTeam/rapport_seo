@@ -240,7 +240,16 @@ def clarity_ui_session_candidates(
         if _clarity_session_has_cookies(candidate):
             valid.append(candidate)
 
-    valid.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    def _rank(path: Path) -> tuple[int, float]:
+        if path == own:
+            priority = 0
+        elif path == shared:
+            priority = 1
+        else:
+            priority = 2
+        return priority, -path.stat().st_mtime
+
+    valid.sort(key=_rank)
     return valid
 
 
