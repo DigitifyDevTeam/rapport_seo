@@ -233,6 +233,12 @@ def _parse_args() -> argparse.Namespace:
         help="Comma-separated hints to pick the right listing on Google Search "
              "(e.g. digitify.fr,street name).",
     )
+    parser.add_argument(
+        "--listing-cid",
+        default="",
+        help="Google Business listing CID for Maps place capture "
+             "(e.g. 10914996429078932281 from #mpd= URL).",
+    )
     return parser.parse_args()
 
 
@@ -295,6 +301,34 @@ def _discover_performance_url(page: Page) -> str:
     except Exception:
         return ""
 
+
+def _extract_listing_cid(*urls: str) -> str:
+    """Parse Google Business listing CID from Performance / Search URLs."""
+    patterns = (
+        r"#mpd=~(\d+)",
+        r"/business/(\d+)/",
+        r"[?&]cid=(\d+)",
+        r"knm=(\d+)",
+    )
+    for raw in urls:
+        text = (raw or "").strip()
+        if not text:
+            continue
+        for pat in patterns:
+            match = re.search(pat, text)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _resolve_listing_cid(args: argparse.Namespace, *extra_urls: str) -> str:
+    explicit = (getattr(args, "listing_cid", None) or "").strip()
+    if explicit:
+        return explicit
+    return _extract_listing_cid(
+        *(extra_urls or ()),
+        getattr(args, "dashboard_url", "") or "",
+    )
 
 def _open_gmb_performance_direct(
     page: Page,
@@ -710,9 +744,33 @@ def screenshot_public_fiche(
     *,
     search_query: str = "",
     fiche_match: list[str] | None = None,
+    listing_cid: str = "",
 ) -> str | None:
     """Screenshot the public GBP fiche on Google Search (not the owner dashboard)."""
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _try_maps_cid_page() -> str | None:
+        if not listing_cid:
+            return None
+        if not open_maps_cid(page, listing_cid):
+            return None
+        try:
+            clip = page.evaluate(MAPS_PANEL_CLIP_JS)
+        except Exception as exc:
+            _log(f"public fiche maps cid: evaluate failed: {exc}")
+            clip = None
+        if not clip or not _screenshot_clip(page, out_path, clip):
+            _log("public fiche: maps cid capture failed.")
+            return None
+        if _validate_saved_public_fiche(out_path):
+            _log(f"public fiche: saved from Maps CID -> {out_path.name}")
+            return str(out_path)
+        _log("public fiche: maps cid capture rejected.")
+        try:
+            out_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return None
 
     def _try_search_page() -> str | None:
         if not _ensure_search_page_for_fiche(page, search_query):
@@ -761,6 +819,10 @@ def screenshot_public_fiche(
             pass
         return None
 
+    if listing_cid:
+        shot = _try_maps_cid_page()
+        if shot:
+            return shot
     if search_query and open_search(page, search_query):
         shot = _try_search_page()
         if shot:
@@ -782,27 +844,33 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
 () => {
   const ownerMarkers = [
     'Votre établissement sur Google',
+    'Vous gérez cette fiche',
+    'gérez cette fiche',
     'interactions avec les clients',
     'Éditer la fiche',
+    'Modifier les infos',
     'Efficacité de la fiche',
     'Compléter les infos',
     'Voir les avis',
   ];
   const performanceMarkers =
     /Rendez-vous:|Envoyer sur votre|Recevez plus d'avis|Ajouter une photo|Vue d.ensemble|Performances?/i;
-  const publicSignals = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web|Appeler|Avis ·/i;
+  const publicSignals =
+    /avis Google|Magasin de|Concepteur de sites|Ouvert ·|Ouvert|Itinéraire|Site Web|Site web|Appeler|Adresse|Téléphone|Avis ·/i;
   const organicSnippet =
     /https?:\/\/|Boutique CBD \| CBD Shop|Fleurs CBD, Huiles CBD/i;
 
-  function clipFromRoot(root) {
+  function clipFromRoot(root, options) {
+    const opts = options || {};
     if (!root) return null;
     const rootRect = root.getBoundingClientRect();
-    if (rootRect.width < 280 || rootRect.height < 200) return null;
+    if (rootRect.width < 260 || rootRect.height < 200) return null;
     const text = (root.innerText || '');
-    if (performanceMarkers.test(text)) return null;
+    const ownerPanel = /gérez cette fiche|vous gérez cette fiche|modifier les infos/i.test(text);
+    if (!ownerPanel && performanceMarkers.test(text)) return null;
     const hits = (text.match(publicSignals) || []).length;
-    if (hits < 2) return null;
-    if (organicSnippet.test(text) && !/avis Google|Ouvert ·|Vous gérez cette fiche/i.test(text)) {
+    if (!ownerPanel && hits < 2) return null;
+    if (organicSnippet.test(text) && !ownerPanel && !/avis Google|Ouvert ·|Ouvert/i.test(text)) {
       return null;
     }
 
@@ -819,6 +887,12 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
           break;
         }
       }
+      if (/Attirez plus de visiteurs|Promouvoir votre fiche/i.test(t)) {
+        const r = el.getBoundingClientRect();
+        if (r.top > rootRect.top + 120) {
+          cutY = Math.min(cutY, r.top - 6);
+        }
+      }
     }
 
     let topY = rootRect.top;
@@ -830,11 +904,12 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
     }
 
     const height = cutY - topY;
-    if (height < 260) return null;
+    if (height < 240) return null;
     const w = Math.min(rootRect.width, window.innerWidth - rootRect.left);
-    if (w < 280) return null;
+    if (w < 260) return null;
     const x = Math.max(0, rootRect.left);
-    if (x < window.innerWidth * 0.38) return null;
+    const minX = ownerPanel ? window.innerWidth * 0.18 : window.innerWidth * 0.38;
+    if (!opts.allowLeft && x < minX) return null;
     return {
       x: x,
       y: Math.max(0, topY),
@@ -855,11 +930,12 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
     'div.kp-wholepage',
     'div.knowledge-panel',
     'div.osrp-blk',
+    'div[data-attrid="kc:/local:merchant listing"]',
   ];
   for (const sel of candidates) {
     const el = document.querySelector(sel);
     if (!el) continue;
-    const clip = clipFromRoot(el);
+    const clip = clipFromRoot(el, { allowLeft: true });
     if (clip) return clip;
   }
   return null;
@@ -869,28 +945,67 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
 
 MAPS_PANEL_CLIP_JS = r"""
 () => {
-  const markers = /avis Google|Magasin de|Ouvert ·|Itinéraire|Site Web|Appeler|gérez cette fiche/i;
-  const roots = [
-    'div[role="main"]',
-    'div.m6QErb',
-    'div[aria-label*="Origine"]',
-    'div[aria-label*="CBD"]',
-  ];
-  for (const sel of roots) {
-    const el = document.querySelector(sel);
-    if (!el) continue;
+  const ownerRe = /gérez cette fiche|vous gérez cette fiche|modifier les infos/i;
+  const bizRe =
+    /site web|itinéraire|ouvert|adresse|téléphone|avis google|concepteur de sites|agence web/i;
+
+  function clipFrom(el) {
+    if (!el) return null;
     const text = (el.innerText || '');
-    if (!markers.test(text)) continue;
+    if (!ownerRe.test(text) && !bizRe.test(text)) return null;
     const rect = el.getBoundingClientRect();
-    if (rect.width < 280 || rect.height < 220) continue;
+    if (rect.width < 260 || rect.height < 280) return null;
+
+    let cutY = rect.bottom;
+    for (const node of el.querySelectorAll('*')) {
+      const t = (node.innerText || '').trim();
+      if (!t || t.length > 120) continue;
+      if (/Attirez plus de visiteurs|Promouvoir votre fiche|Signaler un problème/i.test(t)) {
+        const r = node.getBoundingClientRect();
+        if (r.top > rect.top + 120) {
+          cutY = Math.min(cutY, r.top - 6);
+        }
+      }
+    }
+
+    let topY = rect.top;
+    for (const img of el.querySelectorAll('img')) {
+      const r = img.getBoundingClientRect();
+      if (r.width > 48 && r.height > 36 && r.top < cutY - 40) {
+        topY = Math.min(topY, r.top);
+      }
+    }
+
+    const height = cutY - topY;
+    if (height < 260) return null;
     return {
       x: Math.max(0, rect.left),
-      y: Math.max(0, rect.top),
+      y: Math.max(0, topY),
       width: Math.min(rect.width, window.innerWidth - rect.left),
-      height: Math.min(rect.height, window.innerHeight - rect.top),
+      height: Math.min(height, window.innerHeight - topY),
     };
   }
-  return null;
+
+  const roots = [
+    'div[role="main"]',
+    'div.m6QErb.DxyBCb',
+    'div.m6QErb',
+    'div.x3AX1-LfntMc-header-title-title',
+  ];
+  let best = null;
+  let bestArea = Infinity;
+  for (const sel of roots) {
+    for (const el of document.querySelectorAll(sel)) {
+      const clip = clipFrom(el);
+      if (!clip) continue;
+      const area = clip.width * clip.height;
+      if (area < bestArea) {
+        best = clip;
+        bestArea = area;
+      }
+    }
+  }
+  return best;
 }
 """
 
@@ -933,15 +1048,35 @@ def capture_public_fiche_then_restore_search(
     search_query: str = "",
     dash_url: str = "",
     fiche_match: list[str] | None = None,
+    listing_cid: str = "",
 ) -> str | None:
     """Save the public fiche PNG, then leave the browser on Google Search."""
+    cid = listing_cid or _extract_listing_cid(dash_url)
     shot = screenshot_public_fiche(
-        page, out_path, search_query=search_query, fiche_match=fiche_match,
+        page,
+        out_path,
+        search_query=search_query,
+        fiche_match=fiche_match,
+        listing_cid=cid,
     )
     _return_to_search_for_performance(
         page, search_query=search_query, dash_url=dash_url,
     )
     return shot
+
+
+def open_maps_cid(page: Page, cid: str) -> bool:
+    if not cid:
+        return False
+    url = f"https://www.google.com/maps?hl=fr&cid={cid}"
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    except Exception as exc:
+        _log(f"maps cid: navigation failed: {exc}")
+        return False
+    _safe_wait_idle(page, timeout=20_000)
+    time.sleep(3.5)
+    return True
 
 
 def open_maps_search(page: Page, query: str) -> bool:
@@ -2480,6 +2615,12 @@ def main() -> int:
                 _log(f"dashboard-url: aligned to report month {report_ym}")
                 dash_url = aligned
 
+        listing_cid = _resolve_listing_cid(
+            args, dash_url, saved_url, client_perf_url,
+        )
+        if listing_cid:
+            _log(f"public fiche: listing CID {listing_cid}")
+
         def _capture_from_gmb_app() -> Page | None:
             """Open GBP app, select location, then Performance (fiche screenshot later)."""
             return _open_gmb_performance_direct(page, primary, alias_only)
@@ -2644,6 +2785,7 @@ def main() -> int:
                     search_query=search_query,
                     dash_url=dash_url,
                     fiche_match=fiche_hints,
+                    listing_cid=listing_cid,
                 )
                 if shot:
                     charts["business_card"] = shot

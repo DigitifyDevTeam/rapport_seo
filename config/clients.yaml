@@ -76,6 +76,7 @@ clients:
       ui_fiche_match:
         - digitify.fr
         - "Doyen Georges Chapas"
+      ui_listing_cid: "10914996429078932281"
       ui_project_aliases:
         - "Digitify.fr"
         - "digitify.fr"

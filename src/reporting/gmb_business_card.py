@@ -29,12 +29,17 @@ _PANEL_MARKERS = (
     "avis google",
     "magasin de",
     "gérez cette fiche",
+    "modifier les infos",
+    "concepteur de sites",
+    "agence web",
     "ouvert",
     "itinéraire",
     "appeler",
     "site web",
     "enregistrer",
     "partager",
+    "adresse",
+    "téléphone",
 )
 
 
@@ -92,6 +97,8 @@ def is_valid_public_fiche_png(path: Path) -> bool:
         return False
     if "origine cbd" in text and ("paris" in text or "75004" in text):
         return panel_hits >= 1
+    if "digitify" in text and panel_hits >= 1:
+        return True
     logger.info(
         "[gmb-card] %s: insufficient panel signals (panel=%d)",
         path.name, panel_hits,

@@ -1502,6 +1502,9 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
     ]
     if fiche_hints:
         cmd.extend(["--fiche-match", ",".join(fiche_hints)])
+    listing_cid = (gmb_cfg.get("ui_listing_cid") or "").strip()
+    if listing_cid:
+        cmd.extend(["--listing-cid", listing_cid])
     session_owner = gmb_ui_session_owner(client)
     using_foreign_session = session_owner != client.id
     perf_url = ""

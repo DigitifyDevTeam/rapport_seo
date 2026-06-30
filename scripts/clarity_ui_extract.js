@@ -222,18 +222,17 @@ function normalizeLabel(text) {
   return (text || "").replace(/\s+/g, " ").trim();
 }
 
-function labelMatches(text, labels) {
-  const t = normalizeLabel(text).toLowerCase();
-  if (!t || t.length > 80) return false;
-  return labels.some((label) => {
-    const l = normalizeLabel(label).toLowerCase();
-    return t === l || t.startsWith(l) || t.endsWith(l);
-  });
-}
-
 function extractKpisInBrowser(labels) {
   function normalize(text) {
     return (text || "").replace(/\s+/g, " ").trim();
+  }
+  function labelMatches(text, candidates) {
+    const t = normalize(text).toLowerCase();
+    if (!t || t.length > 80) return false;
+    return candidates.some((label) => {
+      const l = normalize(label).toLowerCase();
+      return t === l || t.startsWith(l) || t.endsWith(l);
+    });
   }
   const numberRe =
     /^-?[\d][\d\s\u00A0\u202F.,]*\s*(%|sec|min|s|m|h|k)?$/iu;
