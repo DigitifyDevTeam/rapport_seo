@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -171,6 +172,86 @@ def reference_png_for_client(
     return candidate if candidate.is_file() else None
 
 
+def _sync_gmb_ui_business_card(output_dir: Path, card_path: Path) -> None:
+    """Point ``gmb_ui.json`` charts.business_card at the report PNG."""
+    gmb_ui_path = output_dir / "gmb_ui.json"
+    data: dict = {}
+    if gmb_ui_path.is_file():
+        try:
+            loaded = json.loads(gmb_ui_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data = loaded
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    charts = data.get("charts")
+    if not isinstance(charts, dict):
+        charts = {}
+    charts["business_card"] = str(card_path.resolve())
+    data["charts"] = charts
+    try:
+        gmb_ui_path.parent.mkdir(parents=True, exist_ok=True)
+        gmb_ui_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("[gmb-card] could not update %s: %s", gmb_ui_path, exc)
+
+
+def _is_usable_reference_png(path: Path) -> bool:
+    """Lenient check for manual reference uploads (OCR may be sparse)."""
+    if is_valid_public_fiche_png(path):
+        return True
+    if _looks_like_panel_by_shape(path):
+        logger.info(
+            "[gmb-card] accepting reference %s via shape heuristic",
+            path.name,
+        )
+        return True
+    return False
+
+
+def apply_business_card_reference(
+    output_dir: Path,
+    *,
+    client_id: str,
+    reference_path: Path | None = None,
+    force: bool = False,
+) -> Path | None:
+    """Copy a configured reference PNG into the report month folder."""
+    ref = reference_png_for_client(
+        client_id,
+        reference_path=reference_path,
+    )
+    if ref is None:
+        logger.warning(
+            "[gmb-card] reference file missing for %s (expected %s)",
+            client_id,
+            reference_path or f"scripts/clients/{client_id}/gmb_business_card_reference.png",
+        )
+        return None
+    target = output_dir / "gmb_business_card.png"
+    if not force and is_valid_public_fiche_png(target):
+        return target
+    if target.is_file():
+        try:
+            target.unlink()
+        except OSError:
+            pass
+    if not _is_usable_reference_png(ref):
+        logger.warning(
+            "[gmb-card] reference image unusable for %s — check %s",
+            client_id,
+            ref,
+        )
+        return None
+    shutil.copy2(ref, target)
+    _sync_gmb_ui_business_card(output_dir, target)
+    logger.info(
+        "[gmb-card] using reference fiche for %s -> %s",
+        client_id,
+        target,
+    )
+    return target
+
+
 def ensure_valid_business_card(
     output_dir: Path,
     *,
@@ -203,5 +284,6 @@ def ensure_valid_business_card(
         )
         return None
     shutil.copy2(ref, target)
+    _sync_gmb_ui_business_card(output_dir, target)
     logger.info("[gmb-card] applied reference image for %s -> %s", client_id, target)
     return target

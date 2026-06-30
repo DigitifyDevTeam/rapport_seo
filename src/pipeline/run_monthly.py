@@ -55,6 +55,7 @@ from src.reporting.ensure_template import ensure_report_template
 from src.reporting.export_pdf import export as export_pdf
 from src.reporting.clarity_kpi_ocr import merge_clarity_kpi_fallback
 from src.reporting.gmb_business_card import (
+    apply_business_card_reference,
     ensure_valid_business_card,
     is_valid_public_fiche_png,
 )
@@ -1171,7 +1172,12 @@ def _log_gmb_vps_prepare_hint(client: ClientConfig, *, detail: str) -> None:
     )
 
 
-def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
+def _gmb_ui_matches_period(
+    output_dir: Path,
+    period: Period,
+    *,
+    business_card_optional: bool = False,
+) -> bool:
     """Reuse only when PNGs/KPIs match this report month and capture logic."""
     if not _gmb_ui_assets_ready(output_dir):
         return False
@@ -1194,18 +1200,26 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
         )
         return False
     card = output_dir / "gmb_business_card.png"
-    if not card.is_file():
-        logger.info(
-            "[gmb-ui] missing business card in %s — will re-capture",
-            output_dir,
-        )
-        return False
-    if not is_valid_public_fiche_png(card):
-        logger.info(
-            "[gmb-ui] stale/invalid business card in %s — will re-capture",
-            output_dir,
-        )
-        return False
+    if business_card_optional:
+        if card.is_file() and not is_valid_public_fiche_png(card):
+            logger.info(
+                "[gmb-ui] stale/invalid business card in %s — will re-capture KPIs",
+                output_dir,
+            )
+            return False
+    else:
+        if not card.is_file():
+            logger.info(
+                "[gmb-ui] missing business card in %s — will re-capture",
+                output_dir,
+            )
+            return False
+        if not is_valid_public_fiche_png(card):
+            logger.info(
+                "[gmb-ui] stale/invalid business card in %s — will re-capture",
+                output_dir,
+            )
+            return False
     return True
 
 
@@ -1409,7 +1423,13 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
                 output_dir,
             )
             return True
-    if period and not force_refresh and _gmb_ui_matches_period(output_dir, period):
+    if period and not force_refresh and _gmb_ui_matches_period(
+        output_dir,
+        period,
+        business_card_optional=bool(
+            (gmb_cfg.get("business_card_reference") or "").strip(),
+        ),
+    ):
         logger.info(
             "[gmb-ui] reusing valid captures for %s in %s (no browser)",
             period.label,
@@ -1925,17 +1945,27 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     )
     if "gmb" not in _ui_capture_disabled(client):
         _capture_gmb_ui(client, output_dir, period)
-        _capture_gmb_fiche_if_missing(client, output_dir, period)
+        gmb_cfg_pre = client.gmb or {}
+        if not (gmb_cfg_pre.get("business_card_reference") or "").strip():
+            _capture_gmb_fiche_if_missing(client, output_dir, period)
     gmb_cfg = client.gmb or {}
     ref_raw = (gmb_cfg.get("business_card_reference") or "").strip()
     ref_path = Path(ref_raw) if ref_raw else None
     if ref_path and not ref_path.is_absolute():
         ref_path = PROJECT_ROOT / ref_path
-    ensure_valid_business_card(
-        output_dir,
-        client_id=client.id,
-        reference_path=ref_path,
-    )
+    if ref_raw:
+        apply_business_card_reference(
+            output_dir,
+            client_id=client.id,
+            reference_path=ref_path,
+            force=True,
+        )
+    else:
+        ensure_valid_business_card(
+            output_dir,
+            client_id=client.id,
+            reference_path=ref_path,
+        )
     current = _fetch_all(client, period)
     previous = _fetch_all(client, period.previous)
     _log_fetch_summary(client.id, current)
