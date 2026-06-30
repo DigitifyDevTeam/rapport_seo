@@ -131,14 +131,14 @@ def main() -> int:
             _status(
                 WARN,
                 "Playwright cannot launch (missing system libs like libatk). "
-                f"Use SEO_REPORT_SKIP_CONNECTORS=gmb,clarity in .env and run UI capture "
-                f"on Windows, or ask the host to install browser dependencies. ({exc})",
+                f"Use SEO_REPORT_SKIP_UI_CONNECTORS=gmb,clarity and UI sessions, "
+                f"or install browser dependencies. ({exc})",
             ),
         )
 
-    skip = (cfg_env("SEO_REPORT_SKIP_CONNECTORS") or "").strip()
+    skip = (cfg_env("SEO_REPORT_SKIP_API_CONNECTORS") or "").strip()
     if skip:
-        worst = max(worst, _status(OK, f"SEO_REPORT_SKIP_CONNECTORS={skip}"))
+        worst = max(worst, _status(OK, f"SEO_REPORT_SKIP_API_CONNECTORS={skip}"))
 
     print()
     if worst >= FAIL:

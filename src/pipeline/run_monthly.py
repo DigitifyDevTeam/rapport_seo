@@ -66,7 +66,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v6-hidpi3x-screenshots"
+GMB_UI_CAPTURE_VERSION = "calmonth-v7-fiche-maps-v2"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
 CLARITY_UI_CAPTURE_VERSION = "hidpi-v2"
@@ -102,8 +102,28 @@ _RUNTIME_SKIP: set[str] = set()
 _RUNTIME_REFRESH_CLARITY = False
 
 
+def _api_connectors_disabled_by_env() -> set[str]:
+    """API connectors disabled via env (UI capture remains separate).
+
+    GMB Performance API is **off by default** — reports use Playwright
+    (``gmb_ui_extract.py``). Set ``SEO_REPORT_USE_GMB_API=true`` to opt in.
+    """
+    skip: set[str] = set()
+    raw = (env("SEO_REPORT_SKIP_API_CONNECTORS") or "").strip()
+    if raw:
+        skip.update(
+            part.strip().lower()
+            for part in raw.split(",")
+            if part.strip()
+        )
+    use_gmb_api = (env("SEO_REPORT_USE_GMB_API") or "").strip().lower()
+    if use_gmb_api not in ("1", "true", "yes", "on"):
+        skip.add("gmb")
+    return skip
+
+
 def _disabled_connectors(client: ClientConfig) -> set[str]:
-    skip = set(_RUNTIME_SKIP)
+    skip = set(_RUNTIME_SKIP) | _api_connectors_disabled_by_env()
     for name in ("ga4", "gsc", "gmb", "clarity"):
         section = getattr(client, name, None) or {}
         if isinstance(section, dict) and section.get("enabled") is False:
@@ -115,9 +135,8 @@ def _ui_capture_disabled(client: ClientConfig) -> set[str]:
     """Browser-based GMB/Clarity capture only (not API fallbacks).
 
     Only ``SEO_REPORT_SKIP_UI_CONNECTORS`` disables UI capture.
-    ``SEO_REPORT_SKIP_CONNECTORS`` is for API-level skipping and does NOT
-    affect browser capture — so Docker with sessions can still capture while
-    a plain VPS without browsers can skip APIs independently.
+    ``SEO_REPORT_SKIP_API_CONNECTORS`` / ``SEO_REPORT_USE_GMB_API`` control
+    API fetches only (GMB API is off unless ``SEO_REPORT_USE_GMB_API=true``).
     """
     skip = set()
     raw = (env("SEO_REPORT_SKIP_UI_CONNECTORS") or "").strip()

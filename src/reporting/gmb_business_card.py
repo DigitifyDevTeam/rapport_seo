@@ -25,6 +25,13 @@ _LOCAL_PACK_MARKERS = (
     "résultats pour",
     "plus de lieux",
 )
+# Empty Google Maps shell (city illustration + generic chrome, no business loaded).
+_MAPS_PLACEHOLDER_MARKERS = (
+    "à proximité",
+    "ajouter un libellé",
+    "à propos de ces données",
+    "envoyer vers un téléphone",
+)
 _PANEL_MARKERS = (
     "avis google",
     "magasin de",
@@ -40,7 +47,30 @@ _PANEL_MARKERS = (
     "partager",
     "adresse",
     "téléphone",
+    "boutique",
+    "magasin de cbd",
 )
+
+
+def _is_maps_placeholder(text: str) -> bool:
+    """Generic Maps UI without a loaded place (city illustration + action row)."""
+    lower = text.lower()
+    placeholder_hits = sum(1 for m in _MAPS_PLACEHOLDER_MARKERS if m in lower)
+    if placeholder_hits < 2:
+        return False
+    business_hints = (
+        "origine",
+        "cbd",
+        "magasin",
+        "avis google",
+        "gérez cette fiche",
+        "75004",
+        "7500",
+        "digitify",
+        "téléphone",
+        "adresse",
+    )
+    return not any(hint in lower for hint in business_hints)
 
 
 def _looks_like_panel_by_shape(path: Path) -> bool:
@@ -74,6 +104,9 @@ def is_valid_public_fiche_png(path: Path) -> bool:
     organic_hits = sum(1 for m in _ORGANIC_MARKERS if m in text)
     pack_hits = sum(1 for m in _LOCAL_PACK_MARKERS if m in text)
     panel_hits = sum(1 for m in _PANEL_MARKERS if m in text)
+    if _is_maps_placeholder(text):
+        logger.info("[gmb-card] %s: generic Maps placeholder (no business loaded)", path.name)
+        return False
     if pack_hits >= 1:
         logger.info(
             "[gmb-card] %s: looks like local pack list (pack=%d)",
@@ -147,6 +180,12 @@ def ensure_valid_business_card(
         logger.warning(
             "[gmb-card] no valid business card in %s and no reference for %s",
             output_dir, client_id or "?",
+        )
+        return None
+    if not is_valid_public_fiche_png(ref):
+        logger.warning(
+            "[gmb-card] reference image invalid for %s — not using %s",
+            client_id or "?", ref.name,
         )
         return None
     shutil.copy2(ref, target)

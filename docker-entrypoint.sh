@@ -25,4 +25,6 @@ if [[ -z "${SEO_REPORT_GMB_PROFILE:-}" ]] \
     && [[ -d /app/outputs/_sessions/chrome-profile-gmb-vps ]]; then
   export SEO_REPORT_GMB_PROFILE="/app/outputs/_sessions/chrome-profile-gmb-vps"
 fi
+# GMB/Clarity slides come from UI capture; skip Clarity Data Export API by default.
+export SEO_REPORT_SKIP_API_CONNECTORS="${SEO_REPORT_SKIP_API_CONNECTORS:-clarity}"
 exec "$@"

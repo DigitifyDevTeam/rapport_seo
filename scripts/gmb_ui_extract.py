@@ -74,7 +74,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v6-hidpi3x-screenshots"
+GMB_UI_CAPTURE_VERSION = "calmonth-v7-fiche-maps-v2"
 
 # Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
 _BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
@@ -754,6 +754,8 @@ def screenshot_public_fiche(
             return None
         if not open_maps_cid(page, listing_cid):
             return None
+        if not _wait_for_maps_place_panel(page):
+            _focus_maps_listing(page, fiche_match or [])
         try:
             clip = page.evaluate(MAPS_PANEL_CLIP_JS)
         except Exception as exc:
@@ -801,7 +803,9 @@ def screenshot_public_fiche(
         maps_query = (fiche_match or [None])[0] or search_query
         if not maps_query or not open_maps_search(page, maps_query):
             return None
-        _focus_listing_for_fiche(page, fiche_match or [])
+        _focus_maps_listing(page, fiche_match or [])
+        if not _wait_for_maps_place_panel(page):
+            _focus_listing_for_fiche(page, fiche_match or [])
         try:
             clip = page.evaluate(MAPS_PANEL_CLIP_JS)
         except Exception as exc:
@@ -856,7 +860,7 @@ KNOWLEDGE_PANEL_CLIP_JS = r"""
   const performanceMarkers =
     /Rendez-vous:|Envoyer sur votre|Recevez plus d'avis|Ajouter une photo|Vue d.ensemble|Performances?/i;
   const publicSignals =
-    /avis Google|Magasin de|Concepteur de sites|Ouvert ·|Ouvert|Itinéraire|Site Web|Site web|Appeler|Adresse|Téléphone|Avis ·/i;
+    /avis Google|Magasin de|magasin de cbd|Boutique CBD|Concepteur de sites|Ouvert ·|Ouvert|Itinéraire|Site Web|Site web|Appeler|Adresse|Téléphone|Avis ·|Origine CBD/i;
   const organicSnippet =
     /https?:\/\/|Boutique CBD \| CBD Shop|Fleurs CBD, Huiles CBD/i;
 
@@ -947,12 +951,16 @@ MAPS_PANEL_CLIP_JS = r"""
 () => {
   const ownerRe = /gérez cette fiche|vous gérez cette fiche|modifier les infos/i;
   const bizRe =
-    /site web|itinéraire|ouvert|adresse|téléphone|avis google|concepteur de sites|agence web/i;
+    /site web|itinéraire|ouvert|adresse|téléphone|avis|magasin|boutique|origine|cbd/i;
+  const placeholderRe =
+    /à proximité|ajouter un libellé|à propos de ces données|envoyer vers un téléphone/i;
 
   function clipFrom(el) {
     if (!el) return null;
     const text = (el.innerText || '');
-    if (!ownerRe.test(text) && !bizRe.test(text)) return null;
+    if (placeholderRe.test(text) && !bizRe.test(text)) return null;
+    const bizHits = (text.match(/avis|magasin|boutique|origine|cbd|gérez|ouvert|adresse|téléphone|site web/gi) || []).length;
+    if (!ownerRe.test(text) && bizHits < 2) return null;
     const rect = el.getBoundingClientRect();
     if (rect.width < 260 || rect.height < 280) return null;
 
@@ -1065,6 +1073,31 @@ def capture_public_fiche_then_restore_search(
     return shot
 
 
+def _wait_for_maps_place_panel(page: Page, timeout_s: float = 22.0) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            if page.evaluate(JS_MAPS_PLACE_READY):
+                return True
+        except Exception:
+            pass
+        time.sleep(1.5)
+    return False
+
+
+def _focus_maps_listing(page: Page, fiche_match: list[str]) -> None:
+    try:
+        clicked = page.evaluate(JS_MAPS_CLICK_FIRST_LISTING, fiche_match or [])
+    except Exception as exc:
+        _log(f"public fiche maps: listing click failed: {exc}")
+        return
+    if clicked:
+        _log("public fiche maps: opened first matching listing")
+        time.sleep(3.0)
+        _safe_wait_idle(page, timeout=15_000)
+        _wait_for_maps_place_panel(page, timeout_s=15.0)
+
+
 def open_maps_cid(page: Page, cid: str) -> bool:
     if not cid:
         return False
@@ -1076,6 +1109,8 @@ def open_maps_cid(page: Page, cid: str) -> bool:
         return False
     _safe_wait_idle(page, timeout=20_000)
     time.sleep(3.5)
+    if not _wait_for_maps_place_panel(page, timeout_s=12.0):
+        _log("maps cid: place panel not ready yet")
     return True
 
 
@@ -1229,6 +1264,56 @@ JS_FOCUS_LOCAL_LISTING = "((hints) => {\n" + _JS_HELPERS_BODY + r"""
   best.click();
   return true;
 })
+"""
+
+
+JS_MAPS_CLICK_FIRST_LISTING = "((hints) => {\n" + _JS_HELPERS_BODY + r"""
+  const needles = (hints || [])
+    .map((h) => String(h).toLowerCase())
+    .filter(Boolean);
+  const candidates = Array.from(
+    document.querySelectorAll('a.hfpxzc, a[href*="/maps/place"]'),
+  );
+  let best = null;
+  let bestScore = -1;
+  for (const el of candidates) {
+    if (typeof el.click !== 'function') continue;
+    const t = _gmbNormalize(el.textContent || el.getAttribute('aria-label') || '').toLowerCase();
+    if (!t) continue;
+    const hits = needles.length
+      ? needles.filter((n) => t.includes(n)).length
+      : 1;
+    if (!hits) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    const score = hits * 1000 - rect.top;
+    if (score > bestScore) {
+      best = el;
+      bestScore = score;
+    }
+  }
+  if (!best && candidates.length) {
+    best = candidates[0];
+  }
+  if (!best) return false;
+  best.scrollIntoView({ block: 'center', behavior: 'instant' });
+  best.click();
+  return true;
+})
+"""
+
+
+JS_MAPS_PLACE_READY = r"""
+() => {
+  const root = document.querySelector('div[role="main"]');
+  const text = (root && root.innerText) || '';
+  const placeholder =
+    /à proximité|ajouter un libellé|à propos de ces données|envoyer vers un téléphone/i;
+  const business =
+    /avis|magasin|boutique|gérez cette fiche|ouvert|adresse|téléphone|origine|cbd|site web/i;
+  if (placeholder.test(text) && !business.test(text)) return false;
+  return business.test(text);
+}
 """
 
 
