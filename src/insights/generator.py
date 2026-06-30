@@ -441,9 +441,8 @@ def _plain_trend_phrase(delta_pct: float | None, *, up_is_good: bool = True) -> 
 
 def _plain_overview(kpis: KpiBundle) -> str:
     return (
-        f"Ce mois-ci, votre site accueille {_format_count(kpis.sessions.value)} "
-        f"visites et génère {_format_count(kpis.clicks.value)} clics depuis Google — "
-        "une base solide pour poursuivre le développement de votre visibilité en ligne."
+        f"Ce mois-ci, votre site enregistre {_format_count(kpis.sessions.value)} "
+        f"visites et {_format_count(kpis.clicks.value)} clics depuis Google."
     )
 
 

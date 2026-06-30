@@ -40,7 +40,7 @@ from pptx.util import Inches, Pt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
 # Bump when slide order/structure changes (keep in sync with ensure_template.py).
-TEMPLATE_BUILD_VERSION = "2026-06-v8-clarity-chart-spacing"
+TEMPLATE_BUILD_VERSION = "2026-06-v9-summary-brief-fit"
 
 
 def resolve_template_path(output: str | None = None) -> Path:
@@ -615,7 +615,7 @@ def build_final_summary_slide(prs: Presentation) -> None:
         panel_left, panel_top, panel_w, panel_h)
 
     gap = Inches(0.14)
-    brief_h = Inches(0.72)
+    brief_h = Inches(0.84)
     grid_h = inner_h - brief_h - 2 * gap
     cols = 4
     col_w = int((inner_w - gap * (cols - 1)) / cols)

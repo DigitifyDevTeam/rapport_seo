@@ -354,7 +354,7 @@ class ReportBuilder:
         """
         sizes = {"brief": Pt(12), "card": Pt(11), "takeaway": Pt(10)}
         spacings = {"brief": Pt(5), "card": Pt(3), "takeaway": Pt(3)}
-        max_lines = {"brief": 3, "card": 4, "takeaway": 6}
+        max_lines = {"brief": 2, "card": 4, "takeaway": 6}
         base_size = sizes.get(mode, Pt(9))
         space = spacings.get(mode, Pt(2))
         cap = max_lines.get(mode, 5)
