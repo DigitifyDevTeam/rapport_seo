@@ -1,29 +1,35 @@
 #!/usr/bin/env bash
-# Fix outputs/ files owned by root (old Docker runs) so report containers can write.
+# Fix outputs/ + logs/ ownership (root or other UIDs from old Docker runs).
 #
 #   bash scripts/vps_fix_outputs_permissions.sh
 #
-# Requires sudo once if files are root-owned.
+# Requires sudo once when files are not owned by your user.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 OWNER="$(id -un):$(id -gn)"
-echo "Setting owner of outputs/ and logs/ to ${OWNER}"
+MY_UID="$(id -u)"
+echo "Setting owner of outputs/ and logs/ to ${OWNER} (uid=${MY_UID})"
 
-if find "${ROOT}/outputs" "${ROOT}/logs" -user root 2>/dev/null | grep -q .; then
+_foreign_files() {
+  find "${ROOT}/outputs" "${ROOT}/logs" ! -uid "${MY_UID}" 2>/dev/null || true
+}
+
+if _foreign_files | grep -q .; then
+  echo "Foreign-owned files (not uid ${MY_UID}):"
+  _foreign_files | head -15
   if command -v sudo >/dev/null 2>&1; then
     sudo chown -R "${OWNER}" "${ROOT}/outputs" "${ROOT}/logs"
+    sudo chmod -R u+rwX "${ROOT}/outputs" "${ROOT}/logs"
   else
-    echo "ERROR: root-owned files under outputs/ — run as admin:" >&2
+    echo "ERROR: cannot chown without sudo. Run as admin:" >&2
     echo "  sudo chown -R ${OWNER} ${ROOT}/outputs ${ROOT}/logs" >&2
-    find "${ROOT}/outputs" -user root 2>/dev/null | head -20
+    echo "  sudo chmod -R u+rwX ${ROOT}/outputs ${ROOT}/logs" >&2
     exit 1
   fi
 else
-  chown -R "${OWNER}" "${ROOT}/outputs" "${ROOT}/logs" 2>/dev/null || true
+  chmod -R u+rwX "${ROOT}/outputs" "${ROOT}/logs" 2>/dev/null || true
 fi
-
-chmod -R u+rwX "${ROOT}/outputs" "${ROOT}/logs" 2>/dev/null || true
 
 echo "Done."
