@@ -40,7 +40,7 @@ from pptx.util import Inches, Pt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
 # Bump when slide order/structure changes (keep in sync with ensure_template.py).
-TEMPLATE_BUILD_VERSION = "2026-06-v5-clarity-hero-charts"
+TEMPLATE_BUILD_VERSION = "2026-06-v8-clarity-chart-spacing"
 
 
 def resolve_template_path(output: str | None = None) -> Path:
@@ -83,7 +83,7 @@ KPI_PILL_BG: dict[RGBColor, RGBColor] = {
 
 # Short client-facing definitions on the KPI overview slide.
 KPI_PREAMBLES: dict[str, str] = {
-    "Sessions": "Nombre de visites sur votre site.",
+    "Sessions": "{{kpi_preamble_sessions}}",
     "Utilisateurs": "Visiteurs uniques sur la période.",
     "Conversions": "Achats, contacts ou demandes importantes.",
     "Clics": "Clics depuis Google vers votre site.",
@@ -112,7 +112,8 @@ TOC_ITEMS: list[tuple[str, int]] = [
 FONT_TITLE = "Segoe UI"
 FONT_BODY = "Segoe UI"
 
-# Extra inset for screenshot slots (GMB, Clarity) inside their frames.
+# Extra inset for Clarity hero chart slots (title + screenshot breathing room).
+CLARITY_HERO_CHART_INSET = Inches(0.08)
 CHART_SLOT_INSET = Inches(0.1)
 
 # Safe content zone (widescreen 13.333" × 7.5") — keeps elements inside the slide.
@@ -121,7 +122,6 @@ MARGIN_BOTTOM = Inches(0.45)
 CONTENT_TOP = Inches(1.20)
 PANEL_INNER_PAD = Inches(0.32)
 GRID_GAP = Inches(0.20)
-ORGANIC_CONTENT_TOP = Inches(0.98)
 
 
 def _set_text(shape, text: str, *, size: int = 18, bold: bool = False,
@@ -189,13 +189,6 @@ def _fit_grid(count: int, cols: int, area_w, area_h, gap_x, gap_y) -> tuple[int,
     return cell_w, cell_h
 
 
-def _organic_content_rect(prs: Presentation) -> tuple:
-    """Content area on the organic performance slide (no title band)."""
-    width = prs.slide_width - 2 * MARGIN_X
-    height = prs.slide_height - ORGANIC_CONTENT_TOP - MARGIN_BOTTOM
-    return MARGIN_X, ORGANIC_CONTENT_TOP, width, height
-
-
 def _add_soft_panel(slide, left, top, width, height,
                     *, fill: RGBColor, line: RGBColor | None = None) -> None:
     panel = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top,
@@ -228,9 +221,6 @@ def _add_kpi_card(slide, left, top, width, height, label: str,
                    compact: bool = False,
                    preamble: str | None = None) -> None:
     """KPI tile: terracotta outline, optional préambule, and delta badge."""
-    accent_rgb = accent or KPI_ACCENT_PALETTE[variant_index % len(KPI_ACCENT_PALETTE)]
-    pill_bg = KPI_PILL_BG.get(accent_rgb, LIGHT_BG)
-
     card = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, left, top,
                                    width, height)
     card.adjustments[0] = 0.14
@@ -275,11 +265,14 @@ def _add_kpi_card(slide, left, top, width, height, label: str,
                                       inner_left, pill_top, pill_w, pill_h)
         pill.adjustments[0] = 0.5
         pill.fill.solid()
-        pill.fill.fore_color.rgb = pill_bg
+        pill.fill.fore_color.rgb = RGBColor(0xF1, 0xF5, 0xF9)
         pill.line.fill.background()
-        _add_text_box(slide, inner_left + Inches(0.1), pill_top + Inches(0.04),
+        delta_key = delta_placeholder.strip("{}").strip()
+        pill.name = f"kpi_pill_{delta_key}"
+        delta_box = _add_text_box(slide, inner_left + Inches(0.1), pill_top + Inches(0.04),
                       pill_w - Inches(0.2), pill_h - Inches(0.06),
-                      delta_placeholder, size=9, bold=True, color=accent_rgb)
+                      delta_placeholder, size=9, bold=True, color=MUTED)
+        delta_box.name = f"kpi_text_{delta_key}"
 
 
 def _slide_with_title(prs: Presentation, title: str, subtitle: str | None = None):
@@ -483,7 +476,7 @@ def build_cover(prs: Presentation) -> None:
                   "Rapport SEO", size=44, bold=True,
                   color=RGBColor(0xFF, 0xFF, 0xFF), font_name=FONT_TITLE)
     _add_text_box(slide, Inches(0.62), Inches(2.58), Inches(10.8), Inches(0.55),
-                  "mensuel", size=26, bold=False,
+                  "Mensuel", size=26, bold=False,
                   color=ACCENT_BRIGHT, font_name=FONT_TITLE)
     _add_band(slide, Inches(0.62), Inches(3.32), Inches(1.38), Inches(0.052),
               ACCENT)
@@ -646,7 +639,7 @@ def build_final_summary_slide(prs: Presentation) -> None:
 
 def build_kpi_overview(prs: Presentation) -> None:
     slide = _slide_with_title(prs, "Vue d'ensemble des KPI",
-                                "Performance mois sur mois")
+                                "{{kpi_slide_subtitle}}")
     panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide, prs)
     inner_left, inner_top, inner_w, inner_h = _inner_rect(
         panel_left, panel_top, panel_w, panel_h)
@@ -692,23 +685,14 @@ def _add_chart_synthesis_panel(slide, left, top, width, height,
 
 def build_organic_performance(prs: Presentation) -> None:
     """GA4 organic channel summary (KPI row + period comparison table)."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    _add_band(slide, Inches(0), Inches(0), prs.slide_width, prs.slide_height,
-              PAGE_BG)
-    _add_band(slide, Inches(0), Inches(0), Inches(0.12), prs.slide_height,
-              ACCENT_SECOND)
-    _add_band(slide, Inches(0), Inches(0), prs.slide_width, Inches(0.048), ACCENT)
-
-    title_top = Inches(0.42)
-    content_left, content_top, content_w, content_h = _organic_content_rect(prs)
-    _add_text_box(slide, content_left, title_top, content_w, Inches(0.55),
-                  "{{organic_performance_title}}", size=20, bold=True,
-                  color=PRIMARY, font_name=FONT_TITLE)
-
-    inner_left = content_left + PANEL_INNER_PAD
-    inner_top = content_top + PANEL_INNER_PAD
-    inner_w = content_w - 2 * PANEL_INNER_PAD
-    inner_h = content_h - 2 * PANEL_INNER_PAD
+    slide = _slide_with_title(
+        prs,
+        "{{organic_performance_slide_title}}",
+        "{{organic_performance_slide_subtitle}}",
+    )
+    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide, prs)
+    inner_left, inner_top, inner_w, inner_h = _inner_rect(
+        panel_left, panel_top, panel_w, panel_h)
     footnote_h = Inches(0.38)
     gap = GRID_GAP
     kpi_defs = [
@@ -730,7 +714,7 @@ def build_organic_performance(prs: Presentation) -> None:
                           "table_organic_performance")
 
     _add_text_box(slide, inner_left,
-                  content_top + content_h - PANEL_INNER_PAD - footnote_h,
+                  inner_top + inner_h - footnote_h,
                   inner_w, footnote_h,
                   "* : Visites et utilisateurs venant depuis les moteurs de "
                   "recherche seulement",
@@ -894,9 +878,21 @@ def _add_clarity_chart_row(
 ) -> int:
     """Lay out *charts* in one row; return the Y coordinate below the row."""
     gap = Inches(0.16) if hero else GRID_GAP
-    caption_h = Inches(0.24) if hero else Inches(0.3)
+    if hero:
+        caption_h = Inches(0.26)
+        title_accent_gap = Inches(0.08)
+        accent_h = Inches(0.035)
+        img_top_gap = Inches(0.16)
+        header_h = caption_h + title_accent_gap + accent_h + img_top_gap
+        chart_h = int(charts_area_h - header_h)
+    else:
+        caption_h = Inches(0.3)
+        header_h = caption_h
+        chart_h = int(charts_area_h - caption_h)
+        title_accent_gap = Inches(0)
+        accent_h = Inches(0)
+        img_top_gap = Inches(0)
     chart_w = _fit_row(len(charts), inner_w, gap)
-    chart_h = int(charts_area_h - caption_h)
     charts_total_w = chart_w * len(charts) + gap * (len(charts) - 1)
     charts_left = inner_left + int((inner_w - charts_total_w) / 2)
     for idx, (caption, name) in enumerate(charts):
@@ -907,15 +903,15 @@ def _add_clarity_chart_row(
             align=PP_ALIGN.LEFT if hero else PP_ALIGN.CENTER,
         )
         if hero:
-            _add_band(slide, left, charts_top + caption_h - Inches(0.02),
-                      Inches(0.72), Inches(0.035), ACCENT)
-        img_top = charts_top + caption_h
-        if hero:
+            accent_top = charts_top + caption_h + title_accent_gap
+            _add_band(slide, left, accent_top, Inches(0.72), accent_h, ACCENT)
+            img_top = accent_top + accent_h + img_top_gap
             _add_framed_picture_placeholder(
                 slide, left, img_top, chart_w, chart_h, name,
-                inset=Inches(0.03),
+                inset=CLARITY_HERO_CHART_INSET,
             )
         else:
+            img_top = charts_top + caption_h
             _picture_placeholder(
                 slide,
                 left + CHART_SLOT_INSET,
@@ -924,7 +920,7 @@ def _add_clarity_chart_row(
                 chart_h - 2 * CHART_SLOT_INSET,
                 name,
             )
-    return charts_top + caption_h + chart_h
+    return charts_top + header_h + chart_h
 
 
 def build_clarity(prs: Presentation) -> None:

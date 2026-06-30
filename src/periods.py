@@ -88,6 +88,11 @@ def month_title_fr(year: int, month: int) -> str:
     return f"{_MONTHS_FR[month - 1]} {year}"
 
 
+def month_of_label_fr(year: int, month: int) -> str:
+    """e.g. ``Mois de mai 2026`` (slide subtitles)."""
+    return f"Mois de {month_title_fr(year, month)}"
+
+
 @dataclass(frozen=True)
 class Period:
     """Report month *M* with 25→25 comparison windows."""

@@ -33,6 +33,24 @@ HEADER_BG = RGBColor(0x0F, 0x17, 0x2A)
 ROW_ALT = RGBColor(0xF1, 0xF5, 0xF9)
 ROW_TEXT = RGBColor(0x1A, 0x1F, 0x36)
 
+# KPI delta badges: green = favorable change, purple = unfavorable (see run_monthly).
+KPI_DELTA_POSITIVE = RGBColor(0x14, 0xB8, 0xA6)
+KPI_DELTA_POSITIVE_BG = RGBColor(0xCC, 0xFB, 0xF1)
+KPI_DELTA_NEGATIVE = RGBColor(0x8B, 0x5C, 0xF6)
+KPI_DELTA_NEGATIVE_BG = RGBColor(0xE9, 0xD5, 0xFF)
+KPI_DELTA_NEUTRAL = RGBColor(0x64, 0x74, 0x8B)
+KPI_DELTA_NEUTRAL_BG = RGBColor(0xF1, 0xF5, 0xF9)
+
+_KPI_DELTA_KEYS = (
+    "sessions",
+    "users",
+    "conversions",
+    "clicks",
+    "impressions",
+    "ctr",
+    "avg_position",
+)
+
 # Fractions of total table width per column (must sum to 1.0).
 _TABLE_COLUMN_WIDTHS: dict[str, tuple[float, ...]] = {
     "table_top_pages": (0.68, 0.16, 0.16),
@@ -75,6 +93,7 @@ class ReportBuilder:
                     self._remove_clarity_popular_products_column(slide)
         for slide in prs.slides:
             self._fill_slide(slide, data)
+        self._apply_kpi_delta_pill_colors(prs, data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             prs.save(output_path)
@@ -173,6 +192,82 @@ class ReportBuilder:
                 shape.left = int(shape.left + delta)
                 if shape.width > 0:
                     shape.width = slot_w
+
+    def _apply_kpi_delta_pill_colors(self, prs, data: dict[str, Any]) -> None:
+        """Color MoM delta badges green (favorable) or purple (unfavorable)."""
+        favorable_map = data.get("kpi_delta_favorable")
+        if not isinstance(favorable_map, dict):
+            return
+
+        pills_by_key: dict[str, Any] = {}
+        texts_by_key: dict[str, Any] = {}
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                name = getattr(shape, "name", "") or ""
+                if name.startswith("kpi_pill_"):
+                    pills_by_key[name[len("kpi_pill_"):]] = shape
+                elif name.startswith("kpi_text_"):
+                    texts_by_key[name[len("kpi_text_"):]] = shape
+
+        for key in _KPI_DELTA_KEYS:
+            favorable = favorable_map.get(key)
+            pill = pills_by_key.get(f"{key}_delta")
+            text_shape = texts_by_key.get(f"{key}_delta")
+            if pill is None and text_shape is None:
+                expected = _stringify(data.get(f"{key}_delta"))
+                if not expected or expected == "n/a":
+                    continue
+                for slide in prs.slides:
+                    for shape in slide.shapes:
+                        if not shape.has_text_frame:
+                            continue
+                        if (shape.text_frame.text or "").strip() != expected:
+                            continue
+                        text_shape = shape
+                        pill = self._find_kpi_pill_behind_text(slide, shape)
+                        break
+                    if text_shape is not None:
+                        break
+            if pill is None and text_shape is None:
+                continue
+            accent, bg = self._kpi_delta_colors(favorable)
+            if pill is not None:
+                pill.fill.solid()
+                pill.fill.fore_color.rgb = bg
+            if text_shape is not None and text_shape.has_text_frame:
+                for paragraph in text_shape.text_frame.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.color.rgb = accent
+
+    @staticmethod
+    def _kpi_delta_colors(favorable: Any) -> tuple[RGBColor, RGBColor]:
+        if favorable is True:
+            return KPI_DELTA_POSITIVE, KPI_DELTA_POSITIVE_BG
+        if favorable is False:
+            return KPI_DELTA_NEGATIVE, KPI_DELTA_NEGATIVE_BG
+        return KPI_DELTA_NEUTRAL, KPI_DELTA_NEUTRAL_BG
+
+    @staticmethod
+    def _find_kpi_pill_behind_text(slide, text_shape):
+        text_top = text_shape.top
+        text_left = text_shape.left
+        text_bottom = text_shape.top + text_shape.height
+        best = None
+        best_area = None
+        for shape in slide.shapes:
+            if shape.shape_type != 1:  # MSO_SHAPE_TYPE.AUTO_SHAPE
+                continue
+            if shape.top > text_top + 50_000:
+                continue
+            if shape.top + shape.height < text_bottom - 50_000:
+                continue
+            if abs(shape.left - text_left) > 200_000:
+                continue
+            area = shape.width * shape.height
+            if best is None or area < best_area:
+                best = shape
+                best_area = area
+        return best
 
     def _fill_slide(self, slide, data: dict[str, Any]) -> None:
         for shape in tuple(slide.shapes):
@@ -346,7 +441,7 @@ class ReportBuilder:
         fit_left, fit_top, fit_w, fit_h = _fitted_picture_bounds(
             left, top, width, height, path,
             margin_ratio=(
-                0.012 if placeholder_name.startswith("chart_clarity_")
+                0.05 if placeholder_name.startswith("chart_clarity_")
                 else _PICTURE_MARGIN_RATIO
             ),
         )

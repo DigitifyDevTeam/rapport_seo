@@ -51,7 +51,7 @@ from src.gmb.listing_cid import resolve_listing_cid
 from src.gmb.performance_url import (report_calendar_month_bounds,
                                      rewrite_performance_url_month)
 from src.insights import generator as insights
-from src.periods import REPORTING_ANCHOR_DAY, Period
+from src.periods import REPORTING_ANCHOR_DAY, Period, month_of_label_fr
 from src.pipeline.delivery import send_report
 from src.reporting.ensure_template import ensure_report_template
 from src.reporting.export_pdf import export as export_pdf
@@ -189,6 +189,31 @@ def _format_delta(delta_pct: float | None) -> str:
     else:
         arrow = "="
     return f"{arrow} {delta_pct:+.1f}%"
+
+
+def _kpi_delta_favorable(kpis: KpiBundle) -> dict[str, bool | None]:
+    """True = green badge, False = purple, None = neutral (flat or n/a)."""
+    items = {
+        "sessions": kpis.sessions,
+        "users": kpis.users,
+        "conversions": kpis.conversions,
+        "clicks": kpis.clicks,
+        "impressions": kpis.impressions,
+        "ctr": kpis.ctr,
+        "avg_position": kpis.avg_position,
+    }
+    out: dict[str, bool | None] = {}
+    for name, kpi in items.items():
+        pct = kpi.delta_pct
+        if pct is None:
+            out[name] = None
+        elif abs(pct) < 0.05:
+            out[name] = None
+        elif name == "avg_position":
+            out[name] = pct < 0
+        else:
+            out[name] = pct > 0
+    return out
 
 
 def _kpi_text(kpis: KpiBundle) -> dict[str, str]:
@@ -332,14 +357,22 @@ def _build_report_data(client: ClientConfig, period: Period,
         gmb_kpis=gmb_ui_kpis,
     )
 
+    month_subtitle = month_of_label_fr(period.year, period.month)
+    month_label = period.human_label_fr()
+
     data: dict[str, Any] = {
         "client_name": client.name,
         "agency_name": client.agency_name,
         "period_label": period.human_label(),
+        "kpi_slide_subtitle": month_subtitle,
+        "kpi_preamble_sessions": (
+            f"Nombre de visites sur la période de {month_label}."
+        ),
+        "organic_performance_slide_title": "PERFORMANCE ORGANIQUE",
+        "organic_performance_slide_subtitle": month_subtitle,
         "report_date": datetime.now().strftime("%Y-%m-%d"),
         **client.cover_profile_placeholders(),
         **final_sections,
-        "organic_performance_title": organic_slide.title,
         "organic_perf_users": organic_slide.kpis[0][1],
         "organic_perf_new_users": organic_slide.kpis[1][1],
         "organic_perf_sessions": organic_slide.kpis[2][1],
@@ -380,6 +413,7 @@ def _build_report_data(client: ClientConfig, period: Period,
         ),
     }
     data.update(_kpi_text(kpis))
+    data["kpi_delta_favorable"] = _kpi_delta_favorable(kpis)
     data.update(commentaries)
     data.update(chart_paths)
     data["_kpis"] = kpis.to_dict()

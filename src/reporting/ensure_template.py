@@ -14,7 +14,7 @@ from src.config import PROJECT_ROOT, TEMPLATE_PATH
 logger = logging.getLogger(__name__)
 
 # Keep in sync with scripts/build_template.py TEMPLATE_BUILD_VERSION.
-EXPECTED_TEMPLATE_VERSION = "2026-06-v5-clarity-hero-charts"
+EXPECTED_TEMPLATE_VERSION = "2026-06-v8-clarity-chart-spacing"
 EXPECTED_SLIDE_COUNT = 15
 
 
