@@ -39,6 +39,51 @@ def _normalize_ocr(text: str) -> str:
     )
 
 
+def _digits_only(raw: str) -> str:
+    return re.sub(r"\D", "", raw or "")
+
+
+def _sanitize_kpi_value(key: str, raw: str) -> str | None:
+    """Reject obvious OCR false positives (e.g. 59196 as scroll depth)."""
+    val = (raw or "").strip()
+    if not val:
+        return None
+    lower = val.lower()
+    if key == "scroll_depth":
+        if "%" in val:
+            digits = _digits_only(val)
+            if digits and int(digits) <= 100:
+                return val
+            return None
+        digits = _digits_only(val)
+        if not digits:
+            return val
+        n = int(digits)
+        if n <= 100:
+            return val if "%" in val else f"{n}%"
+        return None
+    if key == "pages_per_session":
+        if re.search(r"\b(sec|min|s|m|h)\b", lower):
+            return None
+        digits = _digits_only(val)
+        if digits and int(digits) > 50:
+            return None
+        return val
+    if key == "active_time":
+        if re.search(r"\b(sec|min|s|m|h)\b", lower):
+            return val
+        digits = _digits_only(val)
+        if digits and int(digits) > 7200:
+            return None
+        return val
+    if key == "sessions":
+        digits = _digits_only(val)
+        if digits and int(digits) > 50_000_000:
+            return None
+        return val
+    return val
+
+
 def _value_after_label(block: str, patterns: tuple[str, ...]) -> str | None:
     norm = _normalize_ocr(block)
     for pat in patterns:
@@ -128,7 +173,9 @@ def extract_clarity_kpis_from_pngs(output_dir: Path) -> dict[str, str]:
         for key, patterns in _KPI_PATTERNS.items():
             val = _value_after_label(band_text, patterns)
             if val:
-                out[key] = val
+                clean = _sanitize_kpi_value(key, val)
+                if clean:
+                    out[key] = clean
     if "sessions" not in out:
         sessions = _sessions_from_devices_png(
             output_dir / "clarity_card_devices.png",
@@ -156,6 +203,8 @@ def merge_clarity_kpi_fallback(
     ocr_vals = extract_clarity_kpis_from_pngs(output_dir)
     for key in missing:
         if ocr_vals.get(key):
-            merged[key] = ocr_vals[key]
-            logger.info("[clarity-kpi-ocr] recovered %s=%s", key, merged[key])
+            clean = _sanitize_kpi_value(key, ocr_vals[key])
+            if clean:
+                merged[key] = clean
+                logger.info("[clarity-kpi-ocr] recovered %s=%s", key, merged[key])
     return merged

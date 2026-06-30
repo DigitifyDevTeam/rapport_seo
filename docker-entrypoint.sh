@@ -27,4 +27,6 @@ if [[ -z "${SEO_REPORT_GMB_PROFILE:-}" ]] \
 fi
 # GMB/Clarity slides come from UI capture; skip Clarity Data Export API by default.
 export SEO_REPORT_SKIP_API_CONNECTORS="${SEO_REPORT_SKIP_API_CONNECTORS:-clarity}"
+export SEO_REPORT_DOCKER="${SEO_REPORT_DOCKER:-1}"
+export TZ="${TZ:-Europe/Paris}"
 exec "$@"

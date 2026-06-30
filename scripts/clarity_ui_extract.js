@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v2";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v3";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -97,18 +97,18 @@ function parseIsoDate(iso) {
   return { year: Number(m[1]), month: Number(m[2]), day: Number(m[3]) };
 }
 
-/** Start of day (local) for Clarity ``start`` query param. */
+/** Start of day UTC for Clarity ``start`` query param (stable across VPS/Docker TZ). */
 function isoToStartMs(iso) {
   const parts = parseIsoDate(iso);
   if (!parts) return null;
-  return new Date(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0).getTime();
+  return Date.UTC(parts.year, parts.month - 1, parts.day, 0, 0, 0, 0);
 }
 
-/** End of day (local) for Clarity ``end`` query param. */
+/** End of day UTC for Clarity ``end`` query param. */
 function isoToEndMs(iso) {
   const parts = parseIsoDate(iso);
   if (!parts) return null;
-  return new Date(parts.year, parts.month - 1, parts.day, 23, 59, 59, 999).getTime();
+  return Date.UTC(parts.year, parts.month - 1, parts.day, 23, 59, 59, 999);
 }
 
 function extractProjectId(url) {
@@ -150,16 +150,26 @@ const KPI_LABELS = {
 const CARD_CAPTURES = [
   {
     id: "referrers",
-    anchorTabs: ["Référent", "Référents", "Canal", "Campagne"],
+    anchorTabs: [
+      "Référent",
+      "Référents",
+      "Referrer",
+      "Referrers",
+      "Canal",
+      "Channel",
+      "Campagne",
+      "Campaign",
+    ],
     activeTab: "Référent",
-    altActiveTabs: ["Référents"],
+    altActiveTabs: ["Référents", "Referrers", "Referrer"],
     matchMode: "referrers",
     rejectPromo: true,
   },
   {
     id: "devices",
-    anchorTabs: ["Navigateurs", "Appareils"],
+    anchorTabs: ["Navigateurs", "Browsers", "Appareils", "Devices"],
     activeTab: "Appareils",
+    altActiveTabs: ["Devices", "Browsers"],
   },
   {
     id: "popular_pages",
@@ -212,11 +222,25 @@ function resolveCardCaptures(skipWidgetIds) {
 }
 
 const CARD_BOUNDS = {
-  minWidth: 300,
-  maxWidth: 620,
-  minHeight: 220,
-  maxHeight: 520,
+  minWidth: 260,
+  maxWidth: 720,
+  minHeight: 180,
+  maxHeight: 640,
 };
+
+const CARD_BOUNDS_DOCKER = {
+  minWidth: 220,
+  maxWidth: 820,
+  minHeight: 160,
+  maxHeight: 720,
+};
+
+function cardBoundsForMode(dockerMode) {
+  return dockerMode ? CARD_BOUNDS_DOCKER : CARD_BOUNDS;
+}
+
+let activeCardBounds = CARD_BOUNDS;
+let clarityDockerMode = false;
 
 function normalizeLabel(text) {
   return (text || "").replace(/\s+/g, " ").trim();
@@ -471,12 +495,14 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
 }
 
 async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options = {}) {
+  const limits = bounds || activeCardBounds;
   if (options.scrollToTopFirst) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await new Promise((r) => setTimeout(r, 400));
   }
-  for (let step = 0; step < 10; step += 1) {
-    const handle = await findWidgetCardHandle(page, anchorTabs, bounds, options);
+  const maxSteps = options.maxScrollSteps || 10;
+  for (let step = 0; step < maxSteps; step += 1) {
+    const handle = await findWidgetCardHandle(page, anchorTabs, limits, options);
     const card = handle ? handle.asElement() : null;
     if (card) {
       return card;
@@ -865,6 +891,7 @@ function widgetFindOptions(target) {
     matchMode: target.matchMode || "default",
     rejectPromo: Boolean(target.rejectPromo),
     scrollToTopFirst: target.id === "referrers",
+    maxScrollSteps: clarityDockerMode ? 18 : 10,
   };
 }
 
@@ -874,7 +901,7 @@ async function prepareWidgetCard(page, target, existingCard = null) {
     (await findWidgetCardHandleWithScroll(
       page,
       target.anchorTabs,
-      CARD_BOUNDS,
+      activeCardBounds,
       widgetFindOptions(target),
     ));
   if (!card) {
@@ -1027,7 +1054,7 @@ async function captureSharedTabWidgets(page, targets, outDir) {
   const card = await findWidgetCardHandleWithScroll(
     page,
     sample.anchorTabs,
-    CARD_BOUNDS,
+    activeCardBounds,
     widgetFindOptions(sample),
   );
   if (!card) {
@@ -1162,15 +1189,23 @@ async function captureKpiStripScreenshot(page, labels, outPath) {
     function normalize(text) {
       return (text || "").replace(/\s+/g, " ").trim();
     }
+    function labelMatches(text, candidates) {
+      const t = normalize(text).toLowerCase();
+      if (!t || t.length > 80) return false;
+      return candidates.some((label) => {
+        const l = normalize(label).toLowerCase();
+        return t === l || t.startsWith(l) || t.endsWith(l) || t.includes(l);
+      });
+    }
 
     function findCardForLabel(labelCandidates) {
       const all = Array.from(document.querySelectorAll("*"));
       for (const el of all) {
         const text = normalize(el.textContent);
-        if (!labelCandidates.some((label) => text === label)) continue;
+        if (!labelMatches(text, labelCandidates)) continue;
 
         let node = el;
-        for (let depth = 0; depth < 8; depth += 1) {
+        for (let depth = 0; depth < 10; depth += 1) {
           if (!node || !node.parentElement) break;
           node = node.parentElement;
           const rect = node.getBoundingClientRect();
@@ -1178,10 +1213,10 @@ async function captureKpiStripScreenshot(page, labels, outPath) {
           const hasNumber = /\d/.test(nodeText);
           if (
             hasNumber &&
-            rect.width >= 180 &&
-            rect.width <= 460 &&
-            rect.height >= 55 &&
-            rect.height <= 150
+            rect.width >= 160 &&
+            rect.width <= 520 &&
+            rect.height >= 48 &&
+            rect.height <= 180
           ) {
             return rect;
           }
@@ -1219,6 +1254,62 @@ async function captureKpiStripScreenshot(page, labels, outPath) {
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   await page.screenshot({ path: outPath, clip, type: "png" });
   return outPath;
+}
+
+async function captureOverviewFallback(page, outPath) {
+  const clip = await page.evaluate(() => {
+    const vw = window.innerWidth || 1920;
+    const vh = window.innerHeight || 1080;
+    return { x: 0, y: 0, width: vw, height: Math.min(420, vh) };
+  });
+  if (!clip || clip.width < 100) return null;
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  await page.screenshot({ path: outPath, clip, type: "png" });
+  console.log(`[card:overview] saved top-band fallback → ${outPath}`);
+  return outPath;
+}
+
+async function waitForClarityDashboard(page, dockerMode = false) {
+  const timeoutMs = dockerMode ? 120_000 : 45_000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const ready = await page.evaluate(() => {
+      const body = (document.body && document.body.innerText) || "";
+      const lower = body.toLowerCase();
+      if (/sign in|se connecter|login\.microsoft/i.test(lower.slice(0, 3000))) {
+        return "login";
+      }
+      if (
+        /sessions|pages par session|pages per session|profondeur de défilement|scroll depth/i.test(
+          lower,
+        )
+      ) {
+        return "ok";
+      }
+      return "";
+    });
+    if (ready === "login") {
+      console.warn("[clarity] sign-in page detected — re-run clarity_ui_login.js");
+      return false;
+    }
+    if (ready === "ok") return true;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  console.warn("[clarity] dashboard KPI strip not visible before timeout");
+  return false;
+}
+
+async function scrollDashboardFully(page) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise((r) => setTimeout(r, 500));
+  for (let i = 0; i < 6; i += 1) {
+    await page.evaluate(() => {
+      window.scrollBy(0, Math.round(window.innerHeight * 0.85));
+    });
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await new Promise((r) => setTimeout(r, 800));
 }
 
 function sleep(ms) {
@@ -1500,6 +1591,8 @@ async function main() {
   const dockerMode = ["1", "true", "yes", "on"].includes(
     String(process.env.SEO_REPORT_DOCKER || process.env.SEO_REPORT_BROWSER_NO_SANDBOX || "").toLowerCase(),
   );
+  activeCardBounds = cardBoundsForMode(dockerMode);
+  clarityDockerMode = dockerMode;
   const browserArgs = ["--disable-blink-features=AutomationControlled"];
   if (dockerMode) {
     browserArgs.push(
@@ -1521,6 +1614,11 @@ async function main() {
     downloadPath: downloadDir,
   });
   const page = (await browser.pages())[0] || (await browser.newPage());
+  try {
+    await page.emulateTimezone("Europe/Paris");
+  } catch (_) {
+    /* ignore */
+  }
 
   if (Array.isArray(raw.cookies) && raw.cookies.length) {
     await page.setCookie(...raw.cookies);
@@ -1539,20 +1637,23 @@ async function main() {
   }
 
   await page.goto(targetUrl, {
-    waitUntil: dockerMode ? "domcontentloaded" : "networkidle2",
-    timeout: dockerMode ? 120_000 : 30_000,
+    waitUntil: "domcontentloaded",
+    timeout: dockerMode ? 120_000 : 60_000,
   });
-  if (periodStart && periodEnd) {
+
+  const dashboardReady = await waitForClarityDashboard(page, dockerMode);
+  if (!dashboardReady && periodStart && periodEnd) {
     const uiApplied = await applyCustomDateRangeUi(page, periodStart, periodEnd);
     if (uiApplied) {
       console.log("[date] Applied via dashboard date picker (fallback).");
+      await new Promise((r) => setTimeout(r, dockerMode ? 8000 : 5000));
+      await waitForClarityDashboard(page, dockerMode);
     }
-    await page.goto(targetUrl, { waitUntil: "networkidle2" });
   }
-  // Give charts/cards time to render (KPI strip often loads after widgets).
-  await new Promise((r) => setTimeout(r, 8000));
-  await page.evaluate(() => window.scrollTo(0, 0));
-  await new Promise((r) => setTimeout(r, 1500));
+
+  const initialWaitMs = dockerMode ? 12_000 : 8000;
+  await new Promise((r) => setTimeout(r, initialWaitMs));
+  await scrollDashboardFully(page);
 
   let kpis = await page.evaluate(extractKpisInBrowser, KPI_LABELS);
   const missingKpis = Object.values(kpis).filter((v) => !v || !v.value).length;
@@ -1569,7 +1670,10 @@ async function main() {
   const charts = {};
   const overviewOut = path.join(path.dirname(outPath), "clarity_card_overview.png");
   try {
-    const written = await captureKpiStripScreenshot(page, KPI_LABELS, overviewOut);
+    let written = await captureKpiStripScreenshot(page, KPI_LABELS, overviewOut);
+    if (!written) {
+      written = await captureOverviewFallback(page, overviewOut);
+    }
     charts.overview = written ? chartPathAbsolute(written) : null;
   } catch (err) {
     console.warn(`[card:overview] screenshot failed: ${err.message}`);

@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -71,7 +72,7 @@ logger = logging.getLogger(__name__)
 GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
-CLARITY_UI_CAPTURE_VERSION = "hidpi-v2"
+CLARITY_UI_CAPTURE_VERSION = "hidpi-v3"
 
 
 @dataclass
@@ -518,6 +519,36 @@ def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
     return True
 
 
+def _persist_clarity_kpi_ocr(output_dir: Path) -> None:
+    """Write OCR-recovered KPIs into clarity_ui.json when DOM scrape missed them."""
+    json_path = output_dir / "clarity_ui.json"
+    if not json_path.is_file():
+        return
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    merged = merge_clarity_kpi_fallback(data, output_dir)
+    if not merged:
+        return
+    kpis = data.get("kpis") or {}
+    changed = False
+    for key, val in merged.items():
+        entry = kpis.get(key)
+        if isinstance(entry, dict) and str(entry.get("value") or "").strip():
+            continue
+        kpis[key] = {"value": val}
+        changed = True
+    if not changed:
+        return
+    data["kpis"] = kpis
+    try:
+        json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        logger.info("[clarity-ui] persisted OCR KPIs into %s", json_path.name)
+    except OSError as exc:
+        logger.warning("[clarity-ui] could not update %s: %s", json_path, exc)
+
+
 def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
                         period: Period, *, refresh: bool = False) -> None:
     """Run the Puppeteer extractor for this client if a session is available.
@@ -541,6 +572,15 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             output_dir,
         )
         return
+
+    if refresh or not _clarity_capture_complete(client, output_dir, period):
+        for card_id in _clarity_required_card_ids(client):
+            stale = output_dir / f"clarity_card_{card_id}.png"
+            if stale.is_file():
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
 
     session_path = clarity_ui_session_path(client, _CLARITY_UI_SESSIONS_DIR)
     logger.info("[clarity-ui] session path=%s  exists=%s",
@@ -601,9 +641,16 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         timeout = 420
 
     logger.info("[clarity-ui] cmd: %s", " ".join(str(c) for c in cmd))
+    capture_env = {**os.environ, "SEO_REPORT_DOCKER": "1"}
     try:
-        result = subprocess.run(cmd, timeout=timeout, check=False,
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            cmd,
+            timeout=timeout,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=capture_env,
+        )
         if result.stdout:
             logger.info("[clarity-ui] stdout:\n%s", result.stdout[-2000:])
         if result.stderr:
@@ -619,6 +666,8 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         return
 
+    _persist_clarity_kpi_ocr(output_dir)
+
     if not _clarity_capture_complete(client, output_dir, period):
         logger.warning(
             "[clarity-ui] capture finished but widget PNGs are still "
@@ -626,6 +675,28 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             "manually in the browser.",
             period,
         )
+        logger.info("[clarity-ui] retrying capture once (extended wait)")
+        try:
+            retry = subprocess.run(
+                cmd,
+                timeout=timeout + 120,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=capture_env,
+            )
+            if retry.stdout:
+                logger.info("[clarity-ui] retry stdout:\n%s", retry.stdout[-2000:])
+            if retry.stderr:
+                logger.info("[clarity-ui] retry stderr:\n%s", retry.stderr[-2000:])
+        except (FileNotFoundError, subprocess.SubprocessError) as exc:
+            logger.warning("[clarity-ui] retry failed: %s", exc)
+        _persist_clarity_kpi_ocr(output_dir)
+        if not _clarity_capture_complete(client, output_dir, period):
+            logger.warning(
+                "[clarity-ui] clarity widgets still incomplete for %s after retry",
+                period,
+            )
 
 
 def _set_runtime_refresh_ga4(enabled: bool) -> None:
