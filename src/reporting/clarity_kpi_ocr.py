@@ -215,14 +215,6 @@ _BAD_CLARITY_WIDGET_RE = re.compile(
     r"utilisateur principal|top user|flutter|désormais disponible",
     re.IGNORECASE,
 )
-_GOOD_DEVICES_WIDGET_RE = re.compile(
-    r"mobile|desktop|navigateur|browser|appareil|device|chrome|safari|android|ios",
-    re.IGNORECASE,
-)
-_GOOD_REFERRERS_WIDGET_RE = re.compile(
-    r"google|direct|bing|canal|référent|referrer|organic|organique|\.com|\.fr",
-    re.IGNORECASE,
-)
 
 
 def clarity_widget_png_valid(card_id: str, path: Path) -> bool:
@@ -243,20 +235,4 @@ def clarity_widget_png_valid(card_id: str, path: Path) -> bool:
             path.name,
         )
         return False
-    if card_id == "devices":
-        ok = bool(_GOOD_DEVICES_WIDGET_RE.search(norm))
-        if not ok:
-            logger.warning(
-                "[clarity-widget-ocr] devices PNG missing device/browser signals (%s)",
-                path.name,
-            )
-        return ok
-    if card_id == "referrers":
-        ok = bool(_GOOD_REFERRERS_WIDGET_RE.search(norm))
-        if not ok:
-            logger.warning(
-                "[clarity-widget-ocr] referrers PNG missing traffic-source signals (%s)",
-                path.name,
-            )
-        return ok
     return True

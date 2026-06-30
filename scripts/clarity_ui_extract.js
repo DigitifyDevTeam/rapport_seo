@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v5";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v6";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -233,10 +233,10 @@ const CARD_BOUNDS = {
 };
 
 const CARD_BOUNDS_DOCKER = {
-  minWidth: 280,
-  maxWidth: 680,
-  minHeight: 200,
-  maxHeight: 720,
+  minWidth: 260,
+  maxWidth: 1020,
+  minHeight: 160,
+  maxHeight: 820,
 };
 
 function cardBoundsForMode(dockerMode) {
@@ -375,7 +375,7 @@ async function applyCustomDateRangeUi(page, periodStart, periodEnd) {
 }
 
 /** Minimum score (0–100) to accept a scored widget card. */
-const WIDGET_SCORE_MIN = 48;
+const WIDGET_SCORE_MIN = 30;
 
 async function findWidgetCardByScoring(page, targetId, bounds) {
   return page.evaluateHandle((id, limits, minScore) => {
@@ -386,18 +386,36 @@ async function findWidgetCardByScoring(page, targetId, bounds) {
     const wrongWidgetRe =
       /retours rapides|quick back|événements intelligents|smart event|entonnoir|funnel|utilisateur principal|top user|flutter|désormais disponible|classeur|nous contacter|clic sortant/i;
 
+    function bodyOk(text) {
+      const lower = (text || "").slice(0, 5000).toLowerCase();
+      if (wrongWidgetRe.test(lower)) return false;
+      if (id === "devices") {
+        return (
+          /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|chrome|safari/.test(
+            lower,
+          ) && !/entonnoir|funnel/.test(lower)
+        );
+      }
+      if (id === "referrers") {
+        return /google|direct|bing|yahoo|facebook|organic|organique|référent|referrer|canal|\.com|\.fr/.test(
+          lower,
+        );
+      }
+      return true;
+    }
+
     function extractHeaderTabs(card) {
       const found = new Set();
       const cardRect = card.getBoundingClientRect();
       for (const el of card.querySelectorAll(
-        '[role="tab"], button, a, span, li, div, p',
+        '[role="tab"], button, a, span, li, div, p, h1, h2, h3, h4',
       )) {
         const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
-        if (!raw || raw.length > 42) continue;
+        if (!raw || raw.length > 48) continue;
         const rect = el.getBoundingClientRect();
         if (rect.width <= 0 || rect.height <= 0) continue;
-        if (rect.top - cardRect.top > 96) continue;
-        if (rect.width > 360 || rect.height > 72) continue;
+        if (rect.top - cardRect.top > 120) continue;
+        if (rect.width > 420 || rect.height > 80) continue;
         found.add(norm(raw));
       }
       return found;
@@ -408,42 +426,38 @@ async function findWidgetCardByScoring(page, targetId, bounds) {
       const tabs = extractHeaderTabs(card);
       let score = 0;
 
-      if (wrongWidgetRe.test(text)) {
-        score -= 120;
+      if (!bodyOk(card.innerText || "")) {
+        return -999;
       }
 
       if (widgetId === "devices") {
         const hasNav = tabs.has("navigateurs") || tabs.has("browsers");
         const hasDev = tabs.has("appareils") || tabs.has("devices");
-        if (hasNav) score += 28;
-        if (hasDev) score += 28;
-        if (hasNav && hasDev) score += 18;
-        if (/mobile|desktop|ordinateur|tablette|android|ios|chrome|safari|firefox|edge/.test(text)) {
-          score += 22;
-        }
+        const bodySplit =
+          /mobile/.test(text)
+          && /desktop|ordinateur|tablette|pc/.test(text);
+        if (hasDev) score += 34;
+        if (hasNav) score += 24;
+        if (hasNav && hasDev) score += 12;
+        if (bodySplit) score += 36;
+        if (/chrome|safari|firefox|edge|android|ios/.test(text)) score += 14;
         if (/\b\d[\d\s.,]*\s*%/.test(text)) score += 8;
-        if (/retours rapides|quick back|événements intelligents|smart event/.test(text)) {
-          score -= 150;
-        }
-        if (!hasNav || !hasDev) score -= 40;
+        if (tabs.has("appareils") || tabs.has("devices")) score += 10;
       } else if (widgetId === "referrers") {
         const hasRef =
           tabs.has("référent") || tabs.has("référents")
           || tabs.has("referrer") || tabs.has("referrers");
         const hasChannel = tabs.has("canal") || tabs.has("channel");
         const hasCampaign = tabs.has("campagne") || tabs.has("campaign");
-        if (hasRef) score += 24;
-        if (hasChannel) score += 24;
-        if (hasCampaign) score += 24;
-        if (hasRef && hasChannel && hasCampaign) score += 16;
-        if (/google|bing|direct|\(direct\)|yahoo|facebook|instagram|organic|organique/.test(text)) {
-          score += 20;
+        if (hasRef) score += 34;
+        if (hasChannel) score += 18;
+        if (hasCampaign) score += 18;
+        if (hasRef && hasChannel && hasCampaign) score += 12;
+        if (/google|bing|direct|\(direct\)|yahoo|facebook|instagram/.test(text)) {
+          score += 28;
         }
-        if (/\.com|\.fr|\.net|\.org/.test(text)) score += 10;
-        if (/retours rapides|événements intelligents|utilisateur principal|flutter/.test(text)) {
-          score -= 150;
-        }
-        if (!hasRef || !hasChannel || !hasCampaign) score -= 50;
+        if (/\.com|\.fr|\.net|\.org/.test(text)) score += 12;
+        if (hasRef && /google|direct|\.com/.test(text)) score += 16;
       } else {
         return -999;
       }
@@ -457,14 +471,17 @@ async function findWidgetCardByScoring(page, targetId, bounds) {
         const rect = el.getBoundingClientRect();
         if (rect.width < limitsArg.minWidth || rect.width > limitsArg.maxWidth) continue;
         if (rect.height < limitsArg.minHeight || rect.height > limitsArg.maxHeight) continue;
-        if (rect.bottom < 0 || rect.top > window.innerHeight + 200) continue;
+        if (rect.bottom < 0 || rect.top > window.innerHeight + 400) continue;
         const text = (el.innerText || "").trim();
-        if (text.length < 50 || !/\d/.test(text)) continue;
+        if (text.length < 40 || !/\d/.test(text)) continue;
         const hasMenu = Boolean(
-          el.querySelector("button,[role='button'],[aria-label*='more' i],[aria-label*='menu' i]"),
+          el.querySelector(
+            "button,[role='button'],[aria-label*='more' i],[aria-label*='menu' i]",
+          ),
         );
         const hasTabs = Boolean(el.querySelector('[role="tab"], button, a'));
-        if (!hasMenu && !hasTabs) continue;
+        const strongBody = bodyOk(text);
+        if (!hasMenu && !hasTabs && !strongBody) continue;
         raw.push({ el, area: rect.width * rect.height });
       }
       raw.sort((a, b) => a.area - b.area);
@@ -495,6 +512,103 @@ async function findWidgetCardByScoring(page, targetId, bounds) {
     if (!best || bestScore < minScore) return null;
     return best;
   }, targetId, bounds, WIDGET_SCORE_MIN);
+}
+
+async function findWidgetCardByHeading(page, targetId, bounds) {
+  const titles =
+    targetId === "devices"
+      ? ["Appareils", "Devices", "Navigateurs", "Browsers"]
+      : ["Référents", "Référent", "Referrers", "Referrer"];
+  return page.evaluateHandle(
+    (id, limits, titlesArg) => {
+      function norm(t) {
+        return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+      }
+      const wrongWidgetRe =
+        /retours rapides|quick back|événements intelligents|smart event|entonnoir|utilisateur principal|flutter|désormais disponible/i;
+
+      function bodyOk(text) {
+        const lower = (text || "").slice(0, 5000).toLowerCase();
+        if (wrongWidgetRe.test(lower)) return false;
+        if (id === "devices") {
+          return /mobile|desktop|ordinateur|navigateur|browser|chrome|safari|android|ios/.test(
+            lower,
+          );
+        }
+        if (id === "referrers") {
+          return /google|direct|bing|\.com|\.fr|référent|referrer|organic|organique/.test(
+            lower,
+          );
+        }
+        return true;
+      }
+
+      function smallestCardFromHeading(headingEl) {
+        let best = null;
+        let bestArea = Infinity;
+        let node = headingEl;
+        for (let depth = 0; depth < 20; depth += 1) {
+          if (!node.parentElement) break;
+          node = node.parentElement;
+          const rect = node.getBoundingClientRect();
+          const w = rect.width;
+          const h = rect.height;
+          if (
+            w < limits.minWidth
+            || w > limits.maxWidth
+            || h < limits.minHeight
+            || h > limits.maxHeight
+          ) {
+            continue;
+          }
+          const area = w * h;
+          if (area < bestArea) {
+            best = node;
+            bestArea = area;
+          }
+        }
+        return best;
+      }
+
+      const wanted = titlesArg.map((t) => norm(t));
+      const headingPriority = (key) => {
+        if (id === "devices") {
+          if (key === "appareils" || key === "devices") return 0;
+          if (key === "navigateurs" || key === "browsers") return 1;
+        }
+        if (id === "referrers") {
+          if (key === "référents" || key === "referrers") return 0;
+          if (key === "référent" || key === "referrer") return 1;
+        }
+        return 2;
+      };
+
+      const matches = [];
+      for (const el of document.querySelectorAll("*")) {
+        const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+        if (!raw || raw.length > 40) continue;
+        const key = norm(raw);
+        if (!wanted.includes(key)) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 460 || rect.height > 88) continue;
+        const card = smallestCardFromHeading(el);
+        if (!card || !bodyOk(card.innerText || "")) continue;
+        const pos = card.getBoundingClientRect();
+        matches.push({
+          card,
+          pri: headingPriority(key),
+          top: pos.top,
+          left: pos.left,
+        });
+      }
+      if (!matches.length) return null;
+      matches.sort((a, b) => a.pri - b.pri || a.top - b.top || a.left - b.left);
+      return matches[0].card;
+    },
+    targetId,
+    bounds,
+    titles,
+  );
 }
 
 async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
@@ -572,14 +686,29 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
 
       function cardContainsAnchors(card) {
         const found = tabsFoundOnCard(card);
+        const text = (card.innerText || "").slice(0, 4500).toLowerCase();
         if (mode === "referrers") {
-          const hasRef = found.has("référent") || found.has("référents");
-          return hasRef && found.has("canal") && found.has("campagne");
+          const hasRef =
+            found.has("référent")
+            || found.has("référents")
+            || found.has("referrer")
+            || found.has("referrers");
+          const hasChannel = found.has("canal") || found.has("channel");
+          const hasCampaign = found.has("campagne") || found.has("campaign");
+          if (hasRef && hasChannel && hasCampaign) return true;
+          const bodyOk =
+            /google|direct|bing|\.com|\.fr|organic|organique/.test(text);
+          return hasRef && bodyOk;
         }
         if (mode === "devices") {
           const hasNav = found.has("navigateurs") || found.has("browsers");
           const hasDev = found.has("appareils") || found.has("devices");
-          return hasNav && hasDev;
+          if (hasNav && hasDev) return true;
+          const bodyOk =
+            /mobile|desktop|ordinateur|navigateur|browser|chrome|safari|android|ios/.test(
+              text,
+            );
+          return (hasDev || hasNav) && bodyOk;
         }
         const primary = anchorSet[0];
         const secondary = anchorSet.slice(1);
@@ -659,28 +788,41 @@ async function findWidgetCardHandle(page, anchorTabs, bounds, options = {}) {
 async function findWidgetCardHandleWithScroll(page, anchorTabs, bounds, options = {}) {
   const limits = bounds || activeCardBounds;
   const targetId = options.targetId || "";
-  const useScoring = targetId === "devices" || targetId === "referrers";
+  const useHeroFinders = targetId === "devices" || targetId === "referrers";
   if (options.scrollToTopFirst) {
     await page.evaluate(() => window.scrollTo(0, 0));
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 500));
   }
   const maxSteps = options.maxScrollSteps || 10;
-  for (let step = 0; step < maxSteps; step += 1) {
-    let card = null;
-    if (useScoring) {
-      const scored = await findWidgetCardByScoring(page, targetId, limits);
-      card = scored ? scored.asElement() : null;
-    } else {
+
+  async function tryFindOnPage() {
+    if (!useHeroFinders) {
       const handle = await findWidgetCardHandle(page, anchorTabs, limits, options);
-      card = handle ? handle.asElement() : null;
+      return handle ? handle.asElement() : null;
     }
+    const scored = await findWidgetCardByScoring(page, targetId, limits);
+    if (scored) {
+      const card = scored.asElement();
+      if (card) return card;
+    }
+    const byHeading = await findWidgetCardByHeading(page, targetId, limits);
+    if (byHeading) {
+      const card = byHeading.asElement();
+      if (card) return card;
+    }
+    const handle = await findWidgetCardHandle(page, anchorTabs, limits, options);
+    return handle ? handle.asElement() : null;
+  }
+
+  for (let step = 0; step < maxSteps; step += 1) {
+    const card = await tryFindOnPage();
     if (card) {
       return card;
     }
     await page.evaluate(() => {
       window.scrollBy(0, Math.round(window.innerHeight * 0.55));
     });
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 700));
   }
   return null;
 }
@@ -1068,24 +1210,23 @@ function widgetFindOptions(target) {
 
 async function widgetBodyLooksReady(cardHandle, targetId) {
   return cardHandle.evaluate((card, id) => {
-    const text = (card.innerText || "").slice(0, 4500).toLowerCase();
+    const text = (card.innerText || "").slice(0, 4500);
+    const lower = text.toLowerCase();
     const wrongWidget =
       /retours rapides|quick back|événements intelligents|smart event|utilisateur principal|top user|flutter|désormais disponible|entonnoir|funnel|classeur|nous contacter|clic sortant/i;
-    if (wrongWidget.test(text)) {
+    if (wrongWidget.test(lower)) {
       return false;
     }
     if (id === "devices") {
       return (
         /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|windows|mac|chrome|safari/.test(
-          text,
-        ) && !/configurer des entonnoirs|entonnoir/.test(text)
+          lower,
+        ) && !/configurer des entonnoirs|entonnoir/.test(lower)
       );
     }
     if (id === "referrers") {
-      return (
-        /google|direct|bing|yahoo|facebook|instagram|organic|organique|référent|referrer|canal|campagn|\.com|\.fr/.test(
-          text,
-        )
+      return /google|direct|bing|yahoo|facebook|instagram|organic|organique|référent|referrer|canal|campagn|\.com|\.fr/.test(
+        lower,
       );
     }
     return true;
@@ -1112,8 +1253,12 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   const altOnly = tabLabels.slice(1);
   const tabOpts = { exactTabMatch: Boolean(target.exactTabMatch) };
   let tabOk = false;
+  const heroWidget = target.id === "devices" || target.id === "referrers";
+  if (heroWidget && (await widgetBodyLooksReady(card, target.id))) {
+    tabOk = true;
+  }
   const maxAttempts = target.id === "popular_products" ? 4 : 4;
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts && !tabOk; attempt += 1) {
     if (target.id === "popular_pages") {
       tabOk = await activatePagesSuperieuresTab(page, card);
     } else if (typeof target.tabIndex === "number") {
@@ -1343,12 +1488,9 @@ async function captureAutoWidgetCards(page, cardTargets, outDir, downloadDir) {
   for (const target of standalone) {
     const cardOut = path.join(outDir, `clarity_card_${target.id}.png`);
     try {
-      let written = null;
-      if (clarityDockerMode && downloadDir) {
+      let written = await screenshotWidgetCard(page, target, cardOut);
+      if (!written && clarityDockerMode && downloadDir) {
         written = await downloadWidgetPng(page, downloadDir, target, cardOut);
-      }
-      if (!written) {
-        written = await screenshotWidgetCard(page, target, cardOut);
       }
       charts[target.id] = written ? chartPathAbsolute(written) : null;
     } catch (err) {
