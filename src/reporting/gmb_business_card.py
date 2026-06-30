@@ -91,8 +91,6 @@ def is_valid_public_fiche_png(path: Path) -> bool:
     """True when OCR suggests a full GBP panel, not an organic blue-link snippet."""
     if not path.is_file():
         return False
-    if path.name.endswith("_reference.png"):
-        return True
     text = ocr_text_from_png(path).lower()
     if len(text.strip()) < 12:
         ok = _looks_like_panel_by_shape(path)

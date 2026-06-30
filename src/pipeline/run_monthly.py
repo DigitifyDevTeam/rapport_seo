@@ -1193,7 +1193,13 @@ def _gmb_ui_matches_period(output_dir: Path, period: Period) -> bool:
         )
         return False
     card = output_dir / "gmb_business_card.png"
-    if card.is_file() and not is_valid_public_fiche_png(card):
+    if not card.is_file():
+        logger.info(
+            "[gmb-ui] missing business card in %s — will re-capture",
+            output_dir,
+        )
+        return False
+    if not is_valid_public_fiche_png(card):
         logger.info(
             "[gmb-ui] stale/invalid business card in %s — will re-capture",
             output_dir,
@@ -1772,7 +1778,7 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
     _capture_clarity_ui(
         client, output_dir, period, refresh=_RUNTIME_REFRESH_CLARITY,
     )
-    if "gmb" not in _disabled_connectors(client):
+    if "gmb" not in _ui_capture_disabled(client):
         _capture_gmb_ui(client, output_dir, period)
     gmb_cfg = client.gmb or {}
     ref_raw = (gmb_cfg.get("business_card_reference") or "").strip()

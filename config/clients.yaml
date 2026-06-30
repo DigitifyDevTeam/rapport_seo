@@ -188,8 +188,8 @@ clients:
         - "Origine CBD"
         - "Origine Diffusion"
         - "75004"
-      # Used when automated capture saves an organic snippet instead of the panel.
-      business_card_reference: scripts/clients/origincbd/gmb_business_card_reference.png
+      # Optional fallback: knowledge-panel PNG only (not organic SERP).
+      # Capture once via VNC: bash scripts/capture_gmb_fiche_reference.sh origincbd
     clarity:
       project_id: "iqfjm1ewdj"
     delivery:
