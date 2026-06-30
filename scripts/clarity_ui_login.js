@@ -20,7 +20,7 @@
 const fs = require("fs");
 const path = require("path");
 const puppeteer = require("puppeteer");
-const { puppeteerLaunchOptions } = require("../../puppeteer_chrome");
+const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -31,18 +31,46 @@ function parseArgs() {
   const out = get("--out");
   const profile = get("--profile");
   const chromePath = get("--chrome");
+  const projectId = get("--project-id");
   if (!out) {
     throw new Error("Missing --out <path>");
   }
-  return { out, profile, chromePath };
+  return { out, profile, chromePath, projectId };
 }
 
 async function main() {
-  const { out, profile, chromePath } = parseArgs();
+  const { out, profile, chromePath, projectId } = parseArgs();
   const outPath = path.resolve(out);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
-  const userDataDir = profile ? path.resolve(profile) : undefined;
+  const vncMode = ["1", "true", "yes", "on"].includes(
+    String(process.env.SEO_REPORT_VNC || "").toLowerCase(),
+  );
+  const defaultProfile = path.resolve(
+    process.env.SEO_REPORT_CLARITY_PROFILE
+      || "outputs/_sessions/chrome-profile-clarity",
+  );
+  const userDataDir = profile
+    ? path.resolve(profile)
+    : (vncMode ? defaultProfile : undefined);
+  if (userDataDir) {
+    fs.mkdirSync(userDataDir, { recursive: true });
+  }
+
+  const dockerMode = ["1", "true", "yes", "on"].includes(
+    String(process.env.SEO_REPORT_DOCKER || "").toLowerCase(),
+  );
+  const launchArgs = [
+    "--start-maximized",
+    "--disable-blink-features=AutomationControlled",
+  ];
+  if (dockerMode || vncMode) {
+    launchArgs.push(
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+    );
+  }
 
   const browser = await puppeteer.launch(
     puppeteerLaunchOptions({
@@ -51,22 +79,25 @@ async function main() {
       executablePath: chromePath || undefined,
       userDataDir,
       ignoreDefaultArgs: ["--enable-automation"],
-      args: [
-        "--start-maximized",
-        "--disable-blink-features=AutomationControlled",
-      ],
+      args: launchArgs,
     }),
   );
 
   const page = (await browser.pages())[0] || (await browser.newPage());
-  await page.goto("https://clarity.microsoft.com/", { waitUntil: "networkidle2" });
+  const startUrl = projectId
+    ? `https://clarity.microsoft.com/projects/view/${projectId}/dashboard`
+    : "https://clarity.microsoft.com/";
+  await page.goto(startUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
 
   console.log("");
-  console.log("In the opened browser:");
-  console.log("  1) Log in to Clarity.");
-  console.log("  2) Open your project dashboard.");
-  console.log("  3) Open your project dashboard.");
-  console.log("  4) Wait until the KPI cards finish loading.");
+  console.log("In the opened browser (noVNC or local window):");
+  console.log("  1) Log in to Clarity (Microsoft account).");
+  if (projectId) {
+    console.log(`  2) Open project dashboard (project id: ${projectId}).`);
+  } else {
+    console.log("  2) Open your project dashboard.");
+  }
+  console.log("  3) Wait until the KPI cards finish loading.");
   console.log("Then come back here and press ENTER.");
   await new Promise((resolve) => process.stdin.once("data", resolve));
 

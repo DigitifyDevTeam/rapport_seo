@@ -58,6 +58,7 @@ function parseArgs() {
   const periodStart = get("--period-start");
   const periodEnd = get("--period-end");
   const projectId = get("--project-id");
+  const profile = get("--profile");
   const show = has("--show");
   const auto = has("--auto");
   const record = !auto;
@@ -72,7 +73,8 @@ function parseArgs() {
       "Usage: --session <path> --out <path> [--record] [--record-timeout 900] "
         + "[--auto] [--url <url>] [--screenshot <path>] "
         + "[--period-start YYYY-MM-DD] [--period-end YYYY-MM-DD] "
-        + "[--project-id <id>] [--skip-widgets popular_products] [--show]",
+        + "[--project-id <id>] [--profile <chrome-profile-dir>] "
+        + "[--skip-widgets popular_products] [--show]",
     );
   }
   return {
@@ -83,6 +85,7 @@ function parseArgs() {
     periodStart,
     periodEnd,
     projectId,
+    profile,
     show: show || record,
     auto,
     record,
@@ -1290,13 +1293,13 @@ async function waitForClarityDashboard(page, dockerMode = false) {
     });
     if (ready === "login") {
       console.warn("[clarity] sign-in page detected — re-run clarity_ui_login.js");
-      return false;
+      return "login";
     }
-    if (ready === "ok") return true;
+    if (ready === "ok") return "ok";
     await new Promise((r) => setTimeout(r, 1500));
   }
   console.warn("[clarity] dashboard KPI strip not visible before timeout");
-  return false;
+  return "timeout";
 }
 
 async function scrollDashboardFully(page) {
@@ -1560,6 +1563,7 @@ async function main() {
     record,
     recordTimeoutMs,
     skipWidgets,
+    profile,
   } = parseArgs();
   const cardTargets = resolveCardCaptures(skipWidgets);
   const sessionPath = path.resolve(session);
@@ -1601,14 +1605,18 @@ async function main() {
       "--disable-dev-shm-usage",
     );
   }
-  const browser = await puppeteer.launch(
-    puppeteerLaunchOptions({
-      headless: show || record ? false : "new",
-      defaultViewport: BROWSER_VIEWPORT,
-      args: browserArgs,
-      ignoreDefaultArgs: ["--enable-automation"],
-    }),
-  );
+  const profileDir = profile ? path.resolve(profile) : "";
+  if (profileDir) {
+    fs.mkdirSync(profileDir, { recursive: true });
+  }
+  const launchBase = {
+    headless: show || record ? false : "new",
+    defaultViewport: BROWSER_VIEWPORT,
+    args: browserArgs,
+    ignoreDefaultArgs: ["--enable-automation"],
+    ...(profileDir ? { userDataDir: profileDir } : {}),
+  };
+  const browser = await puppeteer.launch(puppeteerLaunchOptions(launchBase));
   await browser.defaultBrowserContext().setDownloadBehavior({
     policy: "allow",
     downloadPath: downloadDir,
@@ -1620,17 +1628,17 @@ async function main() {
     /* ignore */
   }
 
-  if (Array.isArray(raw.cookies) && raw.cookies.length) {
+  if (!profileDir && Array.isArray(raw.cookies) && raw.cookies.length) {
     await page.setCookie(...raw.cookies);
   }
 
   await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: dockerMode ? 120_000 : 30_000 });
-  if (raw.storage && raw.storage.localStorage) {
+  if (!profileDir && raw.storage && raw.storage.localStorage) {
     await page.evaluate((items) => {
       for (const [k, v] of Object.entries(items)) localStorage.setItem(k, v);
     }, raw.storage.localStorage);
   }
-  if (raw.storage && raw.storage.sessionStorage) {
+  if (!profileDir && raw.storage && raw.storage.sessionStorage) {
     await page.evaluate((items) => {
       for (const [k, v] of Object.entries(items)) sessionStorage.setItem(k, v);
     }, raw.storage.sessionStorage);
@@ -1641,13 +1649,21 @@ async function main() {
     timeout: dockerMode ? 120_000 : 60_000,
   });
 
-  const dashboardReady = await waitForClarityDashboard(page, dockerMode);
-  if (!dashboardReady && periodStart && periodEnd) {
+  let dashboardState = await waitForClarityDashboard(page, dockerMode);
+  if (dashboardState === "login") {
+    await browser.close();
+    process.exit(2);
+  }
+  if (dashboardState !== "ok" && periodStart && periodEnd) {
     const uiApplied = await applyCustomDateRangeUi(page, periodStart, periodEnd);
     if (uiApplied) {
       console.log("[date] Applied via dashboard date picker (fallback).");
       await new Promise((r) => setTimeout(r, dockerMode ? 8000 : 5000));
-      await waitForClarityDashboard(page, dockerMode);
+      dashboardState = await waitForClarityDashboard(page, dockerMode);
+      if (dashboardState === "login") {
+        await browser.close();
+        process.exit(2);
+      }
     }
   }
 

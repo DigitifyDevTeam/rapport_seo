@@ -624,6 +624,10 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
             "--skip-widgets",
             ",".join(str(w).strip() for w in skip_widgets if str(w).strip()),
         ])
+    clarity_profile = _CLARITY_UI_SESSIONS_DIR / "chrome-profile-clarity"
+    if clarity_profile.is_dir():
+        cmd.extend(["--profile", str(clarity_profile)])
+        logger.info("[clarity-ui] using Chrome profile %s", clarity_profile.name)
 
     if refresh:
         cmd.extend(["--record", "--show", "--record-timeout", "900"])
@@ -660,10 +664,19 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         return
 
     if result.returncode != 0:
-        logger.warning(
-            "[clarity-ui] capture exited with code %d",
-            result.returncode,
-        )
+        if result.returncode == 2:
+            logger.error(
+                "[clarity-ui] Clarity session expired for %s — run on the VPS:\n"
+                "  bash scripts/clarity_ui_prepare_vnc_client.sh %s\n"
+                "Then re-run the report.",
+                client.id,
+                client.id,
+            )
+        else:
+            logger.warning(
+                "[clarity-ui] capture exited with code %d",
+                result.returncode,
+            )
         return
 
     _persist_clarity_kpi_ocr(output_dir)
