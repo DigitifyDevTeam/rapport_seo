@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Run one client report in Docker: ./scripts/docker_run_client.sh cchabitat 2026-04
+# Run one client report in Docker:
+#   ./scripts/docker_run_client.sh cchabitat 2026-04
+#   ./scripts/docker_run_client.sh origincbd 2026-06 --refresh-clarity
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
@@ -7,7 +9,13 @@ cd "${ROOT}"
 source "${ROOT}/scripts/docker_compose_user.sh"
 
 CLIENT="${1:?client id}"
-MONTH="${2:-}"
+shift
+MONTH=""
+if [[ "${1:-}" =~ ^[0-9]{4}-[0-9]{2}$ ]]; then
+  MONTH="$1"
+  shift
+fi
+EXTRA_ARGS=("$@")
 bash "${ROOT}/scripts/vps_fix_outputs_permissions.sh"
 docker compose build seo-reports
 docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
@@ -15,5 +23,8 @@ docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports \
 ARGS=(python -m src.pipeline.run_monthly --client "${CLIENT}")
 if [[ -n "${MONTH}" ]]; then
   ARGS+=(--month "${MONTH}")
+fi
+if ((${#EXTRA_ARGS[@]})); then
+  ARGS+=("${EXTRA_ARGS[@]}")
 fi
 docker compose run --rm --no-TTY "${DOCKER_RUN_USER_ARGS[@]}" seo-reports "${ARGS[@]}"
