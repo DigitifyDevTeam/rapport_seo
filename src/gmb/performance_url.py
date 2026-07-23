@@ -29,18 +29,52 @@ def report_year_month(period_end: str) -> str:
 
 
 def rewrite_performance_url_month(url: str, ym: str) -> str:
-    """Align ``from`` / ``to`` query params in a saved Performance URL to ``ym``."""
+    """Align ``from`` / ``to`` query params in a saved Performance URL to ``ym``.
+
+    When the URL has no ``from``/``to`` yet (common for ``#mpd=`` Search links),
+    inject them so the Performance overlay opens on the report month.
+    """
     if not url or not ym or len(ym) < 7:
         return url
     if "#mpd=" not in url and "promote/performance" not in url:
         return url
     out = url
+    had_from_to = bool(
+        re.search(r"(?:from|to)(?:%3D|=)\d{4}-\d{2}", out, re.I),
+    )
     for prefix in ("from%3D", "to%3D", "from=", "to="):
         out = re.sub(
             rf"({re.escape(prefix)})(\d{{4}}-\d{{2}})(?=[^0-9%]|%|$)",
             rf"\g<1>{ym}",
             out,
         )
+    if had_from_to:
+        return out
+
+    # Inject from/to when missing (picker often fails headless without this).
+    encoded = f"from%3D{ym}%26to%3D{ym}"
+    plain = f"from={ym}&to={ym}"
+    if "#mpd=" in out and "promote/performance" in out:
+        if re.search(r"promote/performance\?", out):
+            out = re.sub(
+                r"(promote/performance\?)",
+                rf"\1{encoded}%26",
+                out,
+                count=1,
+            )
+        else:
+            out = re.sub(
+                r"(promote/performance)",
+                rf"\1?{encoded}",
+                out,
+                count=1,
+            )
+        return out
+    if "promote/performance" in out:
+        if "?" in out:
+            out = re.sub(r"\?", f"?{plain}&", out, count=1)
+        else:
+            out = f"{out}?{plain}"
     return out
 
 

@@ -5,8 +5,8 @@ Flow:
 2. Select the project/location (e.g. "Origincbd").
 3. Screenshot the location overview (``gmb_business_card.png``).
 4. Click "<N> interactions avec les clients" to open Performance.
-5. Open the period picker, select the **report calendar month** only
-   (e.g. juin 2026 when ``--month 2026-06``), click **Appliquer**.
+5. Open **Période**, select the report month twice (start=end, e.g. juin 2026),
+   click **Appliquer** (next to Annuler).
 6. For each tab (Vue d'ensemble, Appels, Réservations, Itinéraire, Clics
    vers le site Web): read the headline KPI and save a chart screenshot.
 
@@ -75,7 +75,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v10"
+GMB_UI_CAPTURE_VERSION = "calmonth-v12"
 
 # Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
 _BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
@@ -1823,6 +1823,173 @@ JS_CLICK_ANYWHERE = "((labels) => {\n" + _JS_HELPERS_BODY + r"""
 """
 
 
+# Soft match for confirm buttons ("Appliquer", "Appliquer la période", aria-label…).
+JS_CLICK_APPLY_BUTTON = "((labels) => {\n" + _JS_HELPERS_BODY + r"""
+  const wanted = (labels || []).map((l) => String(l || '').toLowerCase()).filter(Boolean);
+  function labelHit(raw) {
+    const t = _gmbNormalize(raw).toLowerCase();
+    if (!t || t.length > 120) return false;
+    return wanted.some((w) => t === w || t.startsWith(w + ' ') || t.startsWith(w));
+  }
+  const all = _gmbDeepAll(document);
+  const candidates = [];
+  const samples = [];
+  let annulerY = null;
+  for (const el of all) {
+    const t = _gmbNormalize(el.textContent || '');
+    if (/^annuler$/i.test(t) || /^cancel$/i.test(t)) {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) annulerY = r.y;
+    }
+  }
+  for (const el of all) {
+    if (el instanceof SVGElement) continue;
+    const role = ((el.getAttribute && el.getAttribute('role')) || '').toLowerCase();
+    const tag = (el.tagName || '').toLowerCase();
+    const aria = (el.getAttribute && (el.getAttribute('aria-label') || '')) || '';
+    const txt = _gmbNormalize(el.textContent || '');
+    const hit = labelHit(txt) || labelHit(aria);
+    if (!hit) {
+      if (
+        samples.length < 25
+        && (role === 'button' || tag === 'button' || tag === 'span')
+        && txt
+        && txt.length <= 60
+      ) {
+        samples.push(txt);
+      }
+      continue;
+    }
+    // Prefer the exact "Appliquer" chip (not a huge parent wrapping Annuler+Appliquer).
+    if (txt.length > 24 && !/^appliquer$/i.test(txt) && !/^apply$/i.test(txt)) {
+      continue;
+    }
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.width > 420 || rect.height > 100) continue;
+    const clickable = typeof el.click === 'function'
+      && (tag === 'button' || role === 'button' || tag === 'div' || tag === 'span'
+          || tag === 'a' || el.getAttribute('jsaction') || el.tabIndex >= 0);
+    if (!clickable && !aria) continue;
+    let score = rect.width * rect.height;
+    // Prefer Appliquer sitting on the same row as Annuler (screenshot layout).
+    if (annulerY != null && Math.abs(rect.y - annulerY) < 40) score -= 50_000;
+    if (/^appliquer$/i.test(txt) || /^apply$/i.test(txt)) score -= 20_000;
+    candidates.push({
+      el,
+      score,
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+      text: txt || aria,
+    });
+  }
+  if (!candidates.length) {
+    return { ok: false, samples: samples.slice(0, 15) };
+  }
+  candidates.sort((a, b) => a.score - b.score);
+  const best = candidates[0];
+  try {
+    best.el.scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch (e) {}
+  try {
+    best.el.focus();
+  } catch (e) {}
+  try {
+    best.el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    best.el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    best.el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  } catch (e) {}
+  try {
+    best.el.click();
+  } catch (e) {}
+  return { ok: true, x: best.x, y: best.y, text: best.text };
+})
+"""
+
+
+# Open the "Période" control (screenshot: labeled Période, shows e.g. "mai 2026 – juin 2026").
+JS_OPEN_PERIODE = "(() => {\n" + _JS_HELPERS_BODY + r"""
+  const tagged = document.querySelector('[data-gmb-modal="1"]');
+  const all = tagged ? _gmbDeepAll(tagged) : _gmbDeepAll(document);
+  const month = "(?:janv\\.|f\\u00e9vr\\.|mars|avr\\.|mai|juin|juil\\.|ao\\u00fbt|sept\\.|oct\\.|nov\\.|d\\u00e9c\\.)";
+  const rangeRe = new RegExp(
+    month + "\\s*\\d{4}\\s*[\\-\\u2013\\u2014\\u2212]\\s*(?:" + month + "\\s*\\d{4})?",
+    "i",
+  );
+  const candidates = [];
+  for (const el of all) {
+    if (typeof el.click !== 'function') continue;
+    if (el instanceof SVGElement) continue;
+    const t = _gmbNormalize(el.textContent);
+    const aria = _gmbNormalize((el.getAttribute && el.getAttribute('aria-label')) || '');
+    const combined = (t + ' ' + aria).toLowerCase();
+    if (!t || t.length > 120) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.width > 560 || rect.height > 90) continue;
+    let score = 1000;
+    if (/p[eé]riode/i.test(combined)) score -= 400;
+    if (rangeRe.test(t) || rangeRe.test(aria)) score -= 300;
+    if (/^\\s*(janv\\.|f\\u00e9vr\\.|mars|avr\\.|mai|juin|juil\\.|ao\\u00fbt|sept\\.|oct\\.|nov\\.|d\\u00e9c\\.)\\s*\\d{4}\\s*$/i.test(t)) {
+      score -= 100;
+    }
+    if (score >= 1000) continue;
+    candidates.push({ el, score, area: rect.width * rect.height, text: t });
+  }
+  if (!candidates.length) return { ok: false };
+  candidates.sort((a, b) => a.score - b.score || a.area - b.area);
+  const best = candidates[0];
+  best.el.click();
+  return { ok: true, text: best.text };
+})()
+"""
+
+
+# Click a month row inside the open Période list (not the input "juin 2026 –").
+JS_CLICK_MONTH_OPTION = "((monthLabel) => {\n" + _JS_HELPERS_BODY + r"""
+  const wanted = _gmbNormalize(monthLabel);
+  if (!wanted) return { ok: false, reason: 'empty' };
+  const all = _gmbDeepAll(document);
+  const candidates = [];
+  for (const el of all) {
+    if (typeof el.click !== 'function') continue;
+    if (el instanceof SVGElement) continue;
+    const t = _gmbNormalize(el.textContent);
+    if (t !== wanted) continue;
+    // Skip the Période input chip ("juin 2026 –" / full ranges).
+    if (/[\\-\\u2013\\u2014\\u2212]/.test(t)) continue;
+    const role = ((el.getAttribute && el.getAttribute('role')) || '').toLowerCase();
+    const tag = (el.tagName || '').toLowerCase();
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
+    if (rect.width > 360 || rect.height > 64) continue;
+    let score = rect.width * rect.height;
+    if (role === 'option' || role === 'menuitem' || role === 'listitem') score -= 20_000;
+    if (tag === 'li' || tag === 'button') score -= 5_000;
+    candidates.push({
+      el,
+      score,
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height / 2,
+      role: role || tag,
+    });
+  }
+  if (!candidates.length) return { ok: false, reason: 'not-found' };
+  candidates.sort((a, b) => a.score - b.score);
+  const best = candidates[0];
+  try { best.el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
+  try {
+    best.el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    best.el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    best.el.click();
+  } catch (e) {
+    best.el.click();
+  }
+  return { ok: true, x: best.x, y: best.y, role: best.role };
+})
+"""
+
+
 JS_FIND_DATE_BUTTON = "(() => {\n" + _JS_HELPERS_BODY + r"""
   const tagged = document.querySelector('[data-gmb-modal="1"]');
   const all = tagged
@@ -1836,16 +2003,24 @@ JS_FIND_DATE_BUTTON = "(() => {\n" + _JS_HELPERS_BODY + r"""
     month + "\\s*\\d{4}\\s*[\\-\\u2013\\u2014\\u2212]\\s*" + month + "\\s*\\d{4}",
     "i",
   );
+  // Also match a single-month chip ("juin 2026") on the date control.
+  const singleRe = new RegExp("^\\s*" + month + "\\s*\\d{4}\\s*$", "i");
   let best = null;
   for (const el of all) {
     const t = _gmbNormalize(el.textContent);
     if (!t || t.length > 80) continue;
-    if (!rangeRe.test(t)) continue;
+    if (!rangeRe.test(t) && !singleRe.test(t)) continue;
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
     if (rect.width > 520 || rect.height > 80) continue;
-    if (!best || (rect.width * rect.height) < best.area) {
-      best = { el, area: rect.width * rect.height };
+    const score = rangeRe.test(t) ? 0 : 1;
+    const area = rect.width * rect.height;
+    if (
+      !best
+      || score < best.score
+      || (score === best.score && area < best.area)
+    ) {
+      best = { el, area, score };
     }
   }
   if (!best) return false;
@@ -1885,7 +2060,99 @@ JS_LIST_MENUITEMS = "(() => {\n" + _JS_HELPERS_BODY + r"""
 """
 
 
+def _page_for_target(target: Page | Frame) -> Page | None:
+    if isinstance(target, Page):
+        return target
+    try:
+        return target.page
+    except Exception:
+        return None
+
+
+def _click_apply_button(target: Page | Frame) -> bool:
+    """Click Appliquer next to Annuler (Période picker confirm)."""
+    # Playwright role/name is the most reliable for the blue Appliquer button.
+    for pattern in (r"^Appliquer$", r"^Apply$", r"^OK$", r"^Valider$"):
+        try:
+            loc = target.get_by_role("button", name=re.compile(pattern, re.I))
+            if loc.count() > 0:
+                loc.first.click(timeout=3_000)
+                _log(f"date range: clicked apply via role button /{pattern}/")
+                return True
+        except Exception:
+            pass
+    try:
+        loc = target.locator("button, [role='button'], span, div").filter(
+            has_text=re.compile(r"^Appliquer$", re.I),
+        )
+        if loc.count() > 0:
+            loc.last.click(timeout=3_000)
+            _log("date range: clicked apply via locator text Appliquer")
+            return True
+    except Exception:
+        pass
+
+    labels = [
+        "Appliquer",
+        "Apply",
+        "OK",
+        "Valider",
+        "Done",
+        "Terminé",
+        "Confirm",
+        "Confirmer",
+    ]
+    try:
+        result = target.evaluate(JS_CLICK_APPLY_BUTTON, labels)
+    except Exception as exc:
+        _log(f"date range: apply evaluate failed: {exc}")
+        return False
+    if not isinstance(result, dict):
+        return bool(result)
+    if result.get("ok"):
+        page = _page_for_target(target)
+        x, y = result.get("x"), result.get("y")
+        if page is not None and isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            try:
+                # Frame coords → page coords when Performance lives in an iframe.
+                try:
+                    handle = target.frame_element()  # type: ignore[attr-defined]
+                    box = handle.bounding_box() if handle else None
+                    if box:
+                        x = float(x) + float(box["x"])
+                        y = float(y) + float(box["y"])
+                except Exception:
+                    pass
+                page.mouse.click(float(x), float(y))
+            except Exception:
+                pass
+        _log(f"date range: clicked apply {result.get('text')!r}")
+        return True
+    samples = result.get("samples") or []
+    if samples:
+        _log(f"date range: apply not found; nearby buttons={samples!r}")
+    return False
+
+
 def _open_date_dropdown(target: Page | Frame) -> bool:
+    # Prefer the labeled "Période" control from the Performance UI screenshot.
+    try:
+        opened = target.evaluate(JS_OPEN_PERIODE)
+        if isinstance(opened, dict) and opened.get("ok"):
+            _log(f"date range: opened Période ({opened.get('text')!r})")
+            time.sleep(1.2)
+            return True
+    except Exception as exc:
+        _log(f"date range: Période open failed: {exc}")
+    try:
+        loc = target.get_by_text(re.compile(r"P[eé]riode", re.I))
+        if loc.count() > 0:
+            loc.first.click(timeout=3_000)
+            _log("date range: opened Période via text locator")
+            time.sleep(1.2)
+            return True
+    except Exception:
+        pass
     try:
         opened = target.evaluate(JS_FIND_DATE_BUTTON)
     except Exception as exc:
@@ -1898,6 +2165,43 @@ def _open_date_dropdown(target: Page | Frame) -> bool:
     return True
 
 
+def _click_month_option(target: Page | Frame, month_label: str) -> bool:
+    """Click a month row in the open Période list (e.g. 'juin 2026')."""
+    try:
+        result = target.evaluate(JS_CLICK_MONTH_OPTION, month_label)
+        if isinstance(result, dict) and result.get("ok"):
+            page = _page_for_target(target)
+            x, y = result.get("x"), result.get("y")
+            if page is not None and isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                try:
+                    handle = target.frame_element()  # type: ignore[attr-defined]
+                    box = handle.bounding_box() if handle else None
+                    if box:
+                        x = float(x) + float(box["x"])
+                        y = float(y) + float(box["y"])
+                    page.mouse.click(float(x), float(y))
+                except Exception:
+                    pass
+            return True
+    except Exception as exc:
+        _log(f"date range: month option JS failed: {exc}")
+    try:
+        loc = target.get_by_role("option", name=month_label)
+        if loc.count() > 0:
+            loc.first.click(timeout=3_000)
+            return True
+    except Exception:
+        pass
+    try:
+        loc = target.get_by_text(month_label, exact=True)
+        if loc.count() > 0:
+            loc.last.click(timeout=3_000)
+            return True
+    except Exception:
+        pass
+    return bool(target.evaluate(JS_CLICK_ANYWHERE, [month_label]))
+
+
 def select_previous_month_preset(target: Page | Frame) -> bool:
     """Pick Google's built-in previous-month preset (current month − 1)."""
     if not _open_date_dropdown(target):
@@ -1907,8 +2211,7 @@ def select_previous_month_preset(target: Page | Frame) -> bool:
             if not target.evaluate(JS_CLICK_ANYWHERE, [preset]):
                 continue
             time.sleep(0.5)
-            if target.evaluate(JS_CLICK_ANYWHERE,
-                              ["Appliquer", "Apply", "OK"]):
+            if _click_apply_button(target):
                 _log(f"date range: applied preset {preset!r} (month − 1).")
                 time.sleep(3.0)
                 _safe_wait_idle_target(target, timeout=8_000)
@@ -1920,12 +2223,12 @@ def select_previous_month_preset(target: Page | Frame) -> bool:
 
 def select_date_range(target: Page | Frame, period_start: str,
                        period_end: str) -> bool:
-    """Open the GBP date dropdown and pick a single calendar month.
+    """Open Période, pick start+end months, click Appliquer (see GBP UI).
 
-    Google's picker is a two-click range selector with month buttons
-    ("avr. 2026", "mai 2026", ...) and an "Appliquer" confirm button. To get
-    a single month we click the same button twice (start = end = target
-    month), then "Appliquer".
+    Flow matches the Performance screenshot:
+    1) Open the **Période** dropdown
+    2) Click the month twice (start = end = report month, e.g. juin 2026)
+    3) Click **Appliquer** (next to Annuler)
     """
     start_label = _fr_month_year(period_start)
     end_label = _fr_month_year(period_end) or start_label
@@ -1938,18 +2241,24 @@ def select_date_range(target: Page | Frame, period_start: str,
 
     _log(f"date range: setting range to {start_label} -> {end_label}.")
     try:
-        if not target.evaluate(JS_CLICK_ANYWHERE, [start_label]):
+        if not _click_month_option(target, start_label):
             _log(f"date range: start month {start_label!r} not found.")
             return False
-        time.sleep(0.6)
-        if not target.evaluate(JS_CLICK_ANYWHERE, [end_label]):
+        time.sleep(0.7)
+        if not _click_month_option(target, end_label):
             _log(f"date range: end month {end_label!r} not found.")
             return False
-        time.sleep(0.6)
-        if not target.evaluate(JS_CLICK_ANYWHERE,
-                                  ["Appliquer", "Apply", "OK"]):
-            _log("date range: 'Appliquer' button not found.")
-            return False
+        time.sleep(0.8)
+        if not _click_apply_button(target):
+            _log("date range: apply missing — retry picker once.")
+            if _open_date_dropdown(target):
+                _click_month_option(target, start_label)
+                time.sleep(0.5)
+                _click_month_option(target, end_label)
+                time.sleep(0.8)
+            if not _click_apply_button(target):
+                _log("date range: 'Appliquer' button not found.")
+                return False
     except Exception as exc:
         _log(f"date range: month-picker click failed: {exc}")
         return False
@@ -2857,20 +3166,20 @@ def main() -> int:
                 _log(f"modal: debug screenshot failed: {exc}")
 
         # 4) Date range — report calendar month only (e.g. juin for 2026-06).
+        # Always drive the picker (from/to in the URL alone is unreliable).
         if dashboard_frame is not None:
             cal_start, cal_end = _report_calendar_month_bounds(
                 period_end or period_start,
             )
             if dash_url and _dashboard_url_has_month(dash_url, cal_end):
                 _log(
-                    f"date range: dashboard URL already set to {cal_end[:7]}; "
-                    "skipping picker.",
+                    f"date range: URL targets {cal_end[:7]}; "
+                    "still applying picker to confirm.",
                 )
-            else:
-                select_reporting_period(
-                    dashboard_frame, period_start, period_end,
-                    auto_previous=auto_period,
-                )
+            select_reporting_period(
+                dashboard_frame, period_start, period_end,
+                auto_previous=auto_period,
+            )
 
         # 5) Loop the tabs.
         if dashboard_frame is not None:

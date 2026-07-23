@@ -70,7 +70,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v10"
+GMB_UI_CAPTURE_VERSION = "calmonth-v12"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
 CLARITY_UI_CAPTURE_VERSION = "hidpi-v8"
@@ -659,14 +659,8 @@ def _capture_clarity_ui(client: ClientConfig, output_dir: Path,
         )
         return
 
-    if refresh or not _clarity_capture_complete(client, output_dir, period):
-        for card_id in _clarity_required_card_ids(client):
-            stale = output_dir / f"clarity_card_{card_id}.png"
-            if stale.is_file():
-                try:
-                    stale.unlink()
-                except OSError:
-                    pass
+    # Keep existing clarity_card_*.png until a new capture succeeds — otherwise
+    # an expired session leaves empty Clarity slides in the PPTX.
 
     session_candidates = clarity_ui_session_candidates(client, _CLARITY_UI_SESSIONS_DIR)
     session_path = session_candidates[0] if session_candidates else (
