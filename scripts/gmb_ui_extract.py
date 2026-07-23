@@ -5,8 +5,9 @@ Flow:
 2. Select the project/location (e.g. "Origincbd").
 3. Screenshot the location overview (``gmb_business_card.png``).
 4. Click "<N> interactions avec les clients" to open Performance.
-5. Open the period picker, select **previous calendar month** (e.g. April
-   when run in May), click **Appliquer**.
+5. Open the period picker, select the **25→25 cycle months**
+   (month of ``period_start`` → month of ``period_end``, e.g. mai → juin
+   for 25/05→25/06), click **Appliquer**.
 6. For each tab (Vue d'ensemble, Appels, Réservations, Itinéraire, Clics
    vers le site Web): read the headline KPI and save a chart screenshot.
 
@@ -44,7 +45,7 @@ import sys
 import time
 import urllib.parse
 import calendar
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -75,7 +76,7 @@ TAB_TARGETS: list[dict[str, Any]] = [
 ]
 
 # Bump when capture/date-picker logic changes (forces re-scrape on next run).
-GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
+GMB_UI_CAPTURE_VERSION = "cycle25-v9"
 
 # Hi-DPI browser viewport for readable chart PNGs in PowerPoint.
 _BROWSER_VIEWPORT = {"width": 1920, "height": 1080}
@@ -93,11 +94,7 @@ _FR_MONTHS = [
 
 
 def _report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
-    """First/last day of the report calendar month (GBP picker is month-based).
-
-    For report ``2026-04`` with cycle 25/03→25/04, GBP still uses **avril 2026**
-    only, not a mars→avr range in the month selector.
-    """
+    """First/last day of the report calendar month (legacy helper)."""
     if not period_end or len(period_end) < 7:
         return period_end, period_end
     try:
@@ -109,14 +106,14 @@ def _report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
     return f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
 
 
-def _dashboard_url_has_month(url: str, period_end: str) -> bool:
-    """True when saved Performance URL already targets the report month."""
+def _dashboard_url_has_period(url: str, period_start: str, period_end: str) -> bool:
+    """True when saved Performance URL already targets the 25→25 cycle months."""
     root = Path(__file__).resolve().parents[1]
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from src.gmb.performance_url import dashboard_url_has_report_month
+    from src.gmb.performance_url import dashboard_url_has_report_period
 
-    return dashboard_url_has_report_month(url, period_end)
+    return dashboard_url_has_report_period(url, period_start, period_end)
 
 
 def _fr_month_year(iso_date: str) -> str | None:
@@ -1921,13 +1918,11 @@ def select_previous_month_preset(target: Page | Frame) -> bool:
 
 def select_date_range(target: Page | Frame, period_start: str,
                        period_end: str) -> bool:
-    """Open the GBP date dropdown and pick the single month that contains
-    ``period_start``.
+    """Open the GBP date dropdown and pick months covering the 25→25 cycle.
 
-    Google's picker is a two-click range selector with month buttons
-    ("avr. 2026", "mai 2026", ...) and an "Appliquer" confirm button. To get
-    a single month we click the same button twice (start = end = target
-    month), then "Appliquer".
+    Google's picker is month-granularity (``avr. 2026``, ``mai 2026``, …).
+    For cycle ``25/(M-1) → 25/M`` we click start month then end month, then
+    **Appliquer**. Same-month ranges click that month twice.
     """
     start_label = _fr_month_year(period_start)
     end_label = _fr_month_year(period_end) or start_label
@@ -1945,8 +1940,7 @@ def select_date_range(target: Page | Frame, period_start: str,
             _log(f"date range: start month {start_label!r} not found.")
             return False
         time.sleep(0.6)
-        # Second click sets the end of the range. When start_label ==
-        # end_label this yields a single-month selection.
+        # Second click sets the end of the range.
         if not target.evaluate(JS_CLICK_ANYWHERE, [end_label]):
             _log(f"date range: end month {end_label!r} not found.")
             return False
@@ -1967,32 +1961,32 @@ def select_date_range(target: Page | Frame, period_start: str,
 
 def select_reporting_period(target: Page | Frame, period_start: str,
                              period_end: str, *, auto_previous: bool) -> bool:
-    """Apply the reporting month to the Performance date picker."""
-    if auto_previous:
-        _log("date range: auto mode — current calendar month − 1.")
-        if select_previous_month_preset(target):
-            return True
-        start, end = _default_period()
-        _log(f"date range: preset unavailable; using {start[:7]}.")
-        return select_date_range(target, start, end)
-    if not period_start:
-        start, end = _default_period()
-        return select_reporting_period(target, start, end, auto_previous=True)
+    """Apply the 25→25 reporting window to the Performance date picker.
 
-    # Cycle window (e.g. 25 mars → 25 avr) spans two calendar months in the
-    # picker labels; GBP only supports whole months — use report month (M).
-    cal_start, cal_end = _report_calendar_month_bounds(period_end or period_start)
-    start_label = _fr_month_year(cal_start)
-    end_label = _fr_month_year(cal_end)
-    if period_start and period_end:
-        win_start = _fr_month_year(period_start)
-        win_end = _fr_month_year(period_end)
-        if win_start and win_end and win_start != win_end:
-            _log(
-                f"date range: cycle window is {win_start} → {win_end}; "
-                f"GBP picker uses {end_label or win_end} only.",
-            )
-    return select_date_range(target, cal_start, cal_end)
+    GBP only supports whole months, so we select the calendar months that
+    contain ``period_start`` and ``period_end`` (e.g. mai → juin).
+    """
+    if auto_previous or not period_start:
+        start, end = _default_period()
+        _log(
+            f"date range: auto 25→25 cycle {start} → {end} "
+            f"(picker months {start[:7]} → {end[:7]}).",
+        )
+        return select_date_range(target, start, end)
+
+    start_label = _fr_month_year(period_start)
+    end_label = _fr_month_year(period_end) or start_label
+    if start_label and end_label and start_label != end_label:
+        _log(
+            f"date range: 25→25 cycle {period_start} → {period_end}; "
+            f"GBP picker months {start_label} → {end_label}.",
+        )
+    else:
+        _log(
+            f"date range: 25→25 cycle {period_start} → {period_end}; "
+            f"GBP picker month {end_label or start_label}.",
+        )
+    return select_date_range(target, period_start, period_end)
 
 
 def _is_year_only(n: int) -> bool:
@@ -2404,19 +2398,14 @@ def _default_query(business_name: str, location_name: str) -> str:
 
 
 def _default_period() -> tuple[str, str]:
-    """Previous calendar month (start + end dates for the month picker)."""
-    today = date.today()
-    if today.month == 1:
-        prev_year, prev_month = today.year - 1, 12
-    else:
-        prev_year, prev_month = today.year, today.month - 1
-    start = f"{prev_year:04d}-{prev_month:02d}-01"
-    if prev_month == 12:
-        next_year, next_month = prev_year + 1, 1
-    else:
-        next_year, next_month = prev_year, prev_month + 1
-    last_day = date(next_year, next_month, 1) - timedelta(days=1)
-    return start, last_day.isoformat()
+    """25→25 cycle for the scheduled report month (same as GA4 / Clarity)."""
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from src.periods import Period
+
+    period = Period.for_scheduled_run()
+    return period.start.isoformat(), period.end.isoformat()
 
 
 def _docker_browser_args() -> list[str]:
@@ -2672,24 +2661,24 @@ def main() -> int:
                 except Exception:
                     pass
             final_url = dashboard_page.url if _page_alive(dashboard_page) else ""
-            cal_start, cal_end = _report_calendar_month_bounds(
-                period_end or period_start,
-            )
+            report_ym = (period_end or period_start or "")[:7]
             payload = {
                 "captured_at": _now_iso(),
                 "capture_version": GMB_UI_CAPTURE_VERSION,
-                "report_month": (cal_end or period_end or "")[:7],
+                "report_month": report_ym,
                 "url": final_url,
                 "project": project_name,
                 "query": project_name,
                 "period_start": period_start,
                 "period_end": period_end,
-                "calendar_month_start": cal_start,
-                "calendar_month_end": cal_end,
+                "picker_from": (period_start or "")[:7],
+                "picker_to": (period_end or period_start or "")[:7],
+                "calendar_month_start": period_start,
+                "calendar_month_end": period_end,
                 "kpis": kpis,
                 "charts": charts,
             }
-            target_month = (cal_end or period_end or "")[:7]
+            target_month = report_ym
             if not kpis and out_path.exists():
                 try:
                     prior = json.loads(out_path.read_text(encoding="utf-8"))
@@ -2750,19 +2739,21 @@ def main() -> int:
                 f"(use gmb-performance-{client_id}.txt for this brand)",
             )
 
-        cal_start, cal_end = _report_calendar_month_bounds(
-            period_end or period_start,
-        )
-        report_ym = (cal_end or period_end or "")[:7]
+        report_ym = (period_end or period_start or "")[:7]
         if dash_url and report_ym:
             root = Path(__file__).resolve().parents[1]
             if str(root) not in sys.path:
                 sys.path.insert(0, str(root))
-            from src.gmb.performance_url import rewrite_performance_url_month
+            from src.gmb.performance_url import rewrite_performance_url_period
 
-            aligned = rewrite_performance_url_month(dash_url, report_ym)
+            aligned = rewrite_performance_url_period(
+                dash_url, period_start, period_end or period_start,
+            )
             if aligned != dash_url:
-                _log(f"dashboard-url: aligned to report month {report_ym}")
+                _log(
+                    f"dashboard-url: aligned to 25→25 cycle "
+                    f"{(period_start or '')[:7]} → {report_ym}",
+                )
                 dash_url = aligned
 
         listing_cid = _resolve_listing_cid(
@@ -2875,15 +2866,15 @@ def main() -> int:
             except Exception as exc:
                 _log(f"modal: debug screenshot failed: {exc}")
 
-        # 4) Date range — calendar month of the report (not 25→25 in the picker).
+        # 4) Date range — 25→25 cycle months in the GBP picker.
         if dashboard_frame is not None:
-            cal_start, cal_end = _report_calendar_month_bounds(
-                period_end or period_start,
-            )
-            if dash_url and _dashboard_url_has_month(dash_url, cal_end):
+            if dash_url and _dashboard_url_has_period(
+                dash_url, period_start, period_end or period_start,
+            ):
                 _log(
-                    f"date range: dashboard URL already set to {cal_end[:7]}; "
-                    "skipping picker."
+                    f"date range: dashboard URL already set to "
+                    f"{(period_start or '')[:7]} → {(period_end or '')[:7]}; "
+                    "skipping picker.",
                 )
             else:
                 select_reporting_period(
@@ -2969,25 +2960,25 @@ def main() -> int:
             else:
                 resolved_charts[key] = raw
 
-        cal_start, cal_end = _report_calendar_month_bounds(
-            period_end or period_start,
-        )
+        report_ym = (period_end or period_start or "")[:7]
         payload = {
             "captured_at": _now_iso(),
             "capture_version": GMB_UI_CAPTURE_VERSION,
-            "report_month": (cal_end or period_end or "")[:7],
+            "report_month": report_ym,
             "url": final_url,
             "project": project_name,
             "query": project_name,
             "period_start": period_start,
             "period_end": period_end,
-            "calendar_month_start": cal_start,
-            "calendar_month_end": cal_end,
+            "picker_from": (period_start or "")[:7],
+            "picker_to": (period_end or period_start or "")[:7],
+            "calendar_month_start": period_start,
+            "calendar_month_end": period_end,
             "kpis": kpis,
             "charts": resolved_charts,
         }
 
-        target_month = (cal_end or period_end or "")[:7]
+        target_month = report_ym
         if not kpis and out_path.exists():
             try:
                 prior = json.loads(out_path.read_text(encoding="utf-8"))

@@ -48,8 +48,7 @@ from src.config import (PROJECT_ROOT, TEMPLATE_PATH, ClientConfig, env,
 from src.connectors import (clarity as clarity_connector, ga4 as ga4_connector,
                               gmb as gmb_connector, gsc as gsc_connector)
 from src.gmb.listing_cid import resolve_listing_cid
-from src.gmb.performance_url import (report_calendar_month_bounds,
-                                     rewrite_performance_url_month)
+from src.gmb.performance_url import rewrite_performance_url_period
 from src.insights import generator as insights
 from src.periods import REPORTING_ANCHOR_DAY, Period, month_of_label_fr
 from src.pipeline.delivery import send_report
@@ -70,7 +69,7 @@ from src.transform.organic_performance import build_organic_performance_slide
 logger = logging.getLogger(__name__)
 
 # Must match scripts/gmb_ui_extract.py GMB_UI_CAPTURE_VERSION.
-GMB_UI_CAPTURE_VERSION = "calmonth-v8-fiche-cid-auto"
+GMB_UI_CAPTURE_VERSION = "cycle25-v9"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
 CLARITY_UI_CAPTURE_VERSION = "hidpi-v7"
@@ -1778,10 +1777,10 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         cmd.extend(["--listing-cid", listing_cid])
         logger.info("[gmb-ui] listing CID %s for %s", listing_cid, client.id)
     period_end_iso = period.end.isoformat() if period else ""
+    period_start_iso = period.start.isoformat() if period else ""
     if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
-        perf_url = rewrite_performance_url_month(
-            perf_url,
-            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        perf_url = rewrite_performance_url_period(
+            perf_url, period_start_iso, period_end_iso,
         ) if period else perf_url
         cmd.extend(["--dashboard-url", perf_url])
         logger.info("[gmb-ui] Performance URL from %s", perf_url_file.name)
@@ -1790,9 +1789,8 @@ def _capture_gmb_ui(client: ClientConfig, output_dir: Path,
         and dash_from_session
         and ("#mpd=" in dash_from_session or "promote/performance" in dash_from_session)
     ):
-        dash_from_session = rewrite_performance_url_month(
-            dash_from_session,
-            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        dash_from_session = rewrite_performance_url_period(
+            dash_from_session, period_start_iso, period_end_iso,
         ) if period else dash_from_session
         cmd.extend(["--dashboard-url", dash_from_session])
         logger.info(
@@ -1967,10 +1965,10 @@ def _capture_gmb_fiche_if_missing(
     session_owner = gmb_ui_session_owner(client)
     using_foreign_session = session_owner != client.id
     period_end_iso = period.end.isoformat() if period else ""
+    period_start_iso = period.start.isoformat() if period else ""
     if perf_url and ("#mpd=" in perf_url or "promote/performance" in perf_url):
-        perf_url = rewrite_performance_url_month(
-            perf_url,
-            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        perf_url = rewrite_performance_url_period(
+            perf_url, period_start_iso, period_end_iso,
         ) if period else perf_url
         cmd.extend(["--dashboard-url", perf_url])
     elif (
@@ -1978,9 +1976,8 @@ def _capture_gmb_fiche_if_missing(
         and dash_from_session
         and ("#mpd=" in dash_from_session or "promote/performance" in dash_from_session)
     ):
-        dash_from_session = rewrite_performance_url_month(
-            dash_from_session,
-            (report_calendar_month_bounds(period_end_iso)[1] or period_end_iso)[:7],
+        dash_from_session = rewrite_performance_url_period(
+            dash_from_session, period_start_iso, period_end_iso,
         ) if period else dash_from_session
         cmd.extend(["--dashboard-url", dash_from_session])
 
