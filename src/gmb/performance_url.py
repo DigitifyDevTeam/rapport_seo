@@ -9,7 +9,7 @@ import re
 def report_calendar_month_bounds(period_end: str) -> tuple[str, str]:
     """First/last day of the report calendar month (YYYY-MM-DD).
 
-    Kept for compatibility; prefer the 25→25 cycle dates from ``Period``.
+    GMB picker is month-based: ``--month 2026-06`` → juin 2026 only.
     """
     if not period_end or len(period_end) < 7:
         return period_end, period_end
@@ -28,15 +28,20 @@ def report_year_month(period_end: str) -> str:
     return (cal_end or period_end or "")[:7]
 
 
-def _ym(iso_date: str) -> str:
-    return (iso_date or "")[:7]
-
-
 def rewrite_performance_url_month(url: str, ym: str) -> str:
-    """Align both ``from`` and ``to`` query params to a single ``ym`` (legacy)."""
+    """Align ``from`` / ``to`` query params in a saved Performance URL to ``ym``."""
     if not url or not ym or len(ym) < 7:
         return url
-    return rewrite_performance_url_period(url, f"{ym}-01", f"{ym}-28")
+    if "#mpd=" not in url and "promote/performance" not in url:
+        return url
+    out = url
+    for prefix in ("from%3D", "to%3D", "from=", "to="):
+        out = re.sub(
+            rf"({re.escape(prefix)})(\d{{4}}-\d{{2}})(?=[^0-9%]|%|$)",
+            rf"\g<1>{ym}",
+            out,
+        )
+    return out
 
 
 def rewrite_performance_url_period(
@@ -44,47 +49,23 @@ def rewrite_performance_url_period(
     period_start: str,
     period_end: str,
 ) -> str:
-    """Set Performance URL ``from`` / ``to`` to the 25→25 cycle months.
-
-    GBP URLs use month granularity (``YYYY-MM``). For cycle
-    ``25/(M-1) → 25/M`` we set ``from=YYYY-(M-1)`` and ``to=YYYY-M``.
-    """
-    if not url or not period_start:
-        return url
-    if "#mpd=" not in url and "promote/performance" not in url:
-        return url
-    start_ym = _ym(period_start)
-    end_ym = _ym(period_end) or start_ym
-    if len(start_ym) < 7:
-        return url
-    out = url
-    for prefix in ("from%3D", "from="):
-        out = re.sub(
-            rf"({re.escape(prefix)})(\d{{4}}-\d{{2}})(?=[^0-9%]|%|$)",
-            rf"\g<1>{start_ym}",
-            out,
-        )
-    for prefix in ("to%3D", "to="):
-        out = re.sub(
-            rf"({re.escape(prefix)})(\d{{4}}-\d{{2}})(?=[^0-9%]|%|$)",
-            rf"\g<1>{end_ym}",
-            out,
-        )
-    return out
+    """Align URL to the report calendar month (month of ``period_end``)."""
+    ym = report_year_month(period_end or period_start)
+    return rewrite_performance_url_month(url, ym)
 
 
 def dashboard_url_has_report_month(url: str, period_end: str) -> bool:
-    """True when the URL ``to`` month matches the report month (legacy check)."""
+    """True when the Performance URL already targets the report calendar month."""
     if not url or not period_end:
         return False
     ym = report_year_month(period_end)
     if not ym:
         return False
     return (
-        f"to={ym}" in url
-        or f"to%3D{ym}" in url
-        or f"from={ym}" in url
+        f"from={ym}" in url
         or f"from%3D{ym}" in url
+        or f"to={ym}" in url
+        or f"to%3D{ym}" in url
     )
 
 
@@ -93,15 +74,5 @@ def dashboard_url_has_report_period(
     period_start: str,
     period_end: str,
 ) -> bool:
-    """True when URL ``from``/``to`` match the 25→25 cycle months."""
-    if not url or not period_start:
-        return False
-    start_ym = _ym(period_start)
-    end_ym = _ym(period_end) or start_ym
-    if len(start_ym) < 7:
-        return False
-    has_from = f"from={start_ym}" in url or f"from%3D{start_ym}" in url
-    has_to = f"to={end_ym}" in url or f"to%3D{end_ym}" in url
-    if start_ym == end_ym:
-        return has_from or has_to
-    return has_from and has_to
+    """True when URL targets the report month (month of ``period_end``)."""
+    return dashboard_url_has_report_month(url, period_end or period_start)
