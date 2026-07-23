@@ -243,7 +243,7 @@ def _format_delta(delta_pct: float | None) -> str:
 
 
 def _kpi_delta_favorable(kpis: KpiBundle) -> dict[str, bool | None]:
-    """True = green badge, False = purple, None = neutral (flat or n/a)."""
+    """True = green badge (+), False = purple badge (−), None = neutral."""
     items = {
         "sessions": kpis.sessions,
         "users": kpis.users,
@@ -260,9 +260,8 @@ def _kpi_delta_favorable(kpis: KpiBundle) -> dict[str, bool | None]:
             out[name] = None
         elif abs(pct) < 0.05:
             out[name] = None
-        elif name == "avg_position":
-            out[name] = pct < 0
         else:
+            # Strict sign rule for all KPIs (including position moyenne).
             out[name] = pct > 0
     return out
 

@@ -194,7 +194,7 @@ class ReportBuilder:
                     shape.width = slot_w
 
     def _apply_kpi_delta_pill_colors(self, prs, data: dict[str, Any]) -> None:
-        """Color MoM delta badges green (favorable) or purple (unfavorable)."""
+        """Color MoM delta badges green (+) or purple (−) by sign."""
         favorable_map = data.get("kpi_delta_favorable")
         if not isinstance(favorable_map, dict):
             return
