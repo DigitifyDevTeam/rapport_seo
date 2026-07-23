@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 GMB_UI_CAPTURE_VERSION = "calmonth-v10"
 
 # Must match scripts/clarity_ui_extract.js CLARITY_UI_CAPTURE_VERSION.
-CLARITY_UI_CAPTURE_VERSION = "hidpi-v7"
+CLARITY_UI_CAPTURE_VERSION = "hidpi-v8"
 
 
 @dataclass

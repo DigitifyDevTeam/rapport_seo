@@ -198,8 +198,6 @@ clients:
       business_card_reference: scripts/clients/origincbd/gmb_business_card.png
     clarity:
       project_id: "iqfjm1ewdj"
-      ui_skip_widgets:
-        - popular_products
     delivery:
       emails: []
 

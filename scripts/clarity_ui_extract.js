@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v7";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v8";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -155,8 +155,9 @@ const CARD_CAPTURES = [
     id: "devices",
     anchorTabs: ["Navigateurs", "Browsers", "Appareils", "Devices"],
     activeTab: "Appareils",
-    altActiveTabs: ["Devices", "Browsers", "Navigateurs"],
+    altActiveTabs: ["Devices"],
     matchMode: "devices",
+    exactTabMatch: true,
   },
   {
     id: "referrers",
@@ -390,10 +391,21 @@ async function findWidgetCardByScoring(page, targetId, bounds) {
       const lower = (text || "").slice(0, 5000).toLowerCase();
       if (wrongWidgetRe.test(lower)) return false;
       if (id === "devices") {
+        const scrubbed = lower
+          .replace(/chromemobile/g, " ")
+          .replace(/mobile\s*safari/g, " ")
+          .replace(/mobilesafari/g, " ");
+        const browserHits =
+          (/\bchrome\b/.test(scrubbed) ? 1 : 0)
+          + (/\bedge\b/.test(scrubbed) ? 1 : 0)
+          + (/\bsafari\b/.test(scrubbed) ? 1 : 0)
+          + (/\bfirefox\b/.test(scrubbed) ? 1 : 0);
+        const hasDesktopOrTablet =
+          /\bdesktop\b|\bordinateur\b|\btablette\b|\btablet\b/.test(scrubbed);
+        if (browserHits >= 2 && !hasDesktopOrTablet) return false;
         return (
-          /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|chrome|safari/.test(
-            lower,
-          ) && !/entonnoir|funnel/.test(lower)
+          (hasDesktopOrTablet || /\bmobile\b/.test(scrubbed))
+          && !/entonnoir|funnel/.test(lower)
         );
       }
       if (id === "referrers") {
@@ -931,6 +943,84 @@ async function activatePagesSuperieuresTab(page, cardHandle) {
   return true;
 }
 
+async function activateProduitsPopulairesTab(page, cardHandle) {
+  const clicked = await cardHandle.evaluate((card) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    const wanted = new Set([
+      "produits populaires",
+      "popular products",
+      "top products",
+    ]);
+    const picks = [];
+    for (const el of card.querySelectorAll(
+      '[role="tab"], button, a, span, li, div[role="button"]',
+    )) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 40) continue;
+      const key = norm(raw);
+      if (!wanted.has(key)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 30 || rect.height < 12) continue;
+      picks.push({
+        el,
+        key,
+        pri: key === "produits populaires" ? 0 : 1,
+        left: rect.left,
+      });
+    }
+    picks.sort((a, b) => a.pri - b.pri || a.left - b.left);
+    if (!picks.length) return false;
+    picks[0].el.scrollIntoView({ block: "center", inline: "nearest" });
+    picks[0].el.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    picks[0].el.click();
+    return true;
+  });
+  if (!clicked) return false;
+  await new Promise((r) => setTimeout(r, 400));
+  return true;
+}
+
+async function activateAppareilsTab(page, cardHandle) {
+  const clicked = await cardHandle.evaluate((card) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    const wanted = new Set(["appareils", "devices"]);
+    const picks = [];
+    for (const el of card.querySelectorAll(
+      '[role="tab"], button, a, span, li, div[role="button"]',
+    )) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 40) continue;
+      const key = norm(raw);
+      if (!wanted.has(key)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 24 || rect.height < 12) continue;
+      picks.push({
+        el,
+        key,
+        pri: key === "appareils" ? 0 : 1,
+        left: rect.left,
+      });
+    }
+    picks.sort((a, b) => a.pri - b.pri || a.left - b.left);
+    if (!picks.length) return false;
+    picks[0].el.scrollIntoView({ block: "center", inline: "nearest" });
+    picks[0].el.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true }),
+    );
+    picks[0].el.click();
+    return true;
+  });
+  if (!clicked) return false;
+  await new Promise((r) => setTimeout(r, 400));
+  return true;
+}
+
 async function popularPagesTabShowsData(cardHandle) {
   return cardHandle.evaluate(() => {
     const t = (document.body.innerText || "").toLowerCase();
@@ -1227,10 +1317,24 @@ async function widgetBodyLooksReady(cardHandle, targetId) {
       return false;
     }
     if (id === "devices") {
+      // Appareils lists Mobile/Desktop/Tablette — not Chrome/Edge (Navigateurs).
+      // ChromeMobile must not count as the Mobile device row.
+      const scrubbed = lower
+        .replace(/chromemobile/g, " ")
+        .replace(/mobile\s*safari/g, " ")
+        .replace(/mobilesafari/g, " ");
+      const browserHits =
+        (/\bchrome\b/.test(scrubbed) ? 1 : 0)
+        + (/\bedge\b/.test(scrubbed) ? 1 : 0)
+        + (/\bsafari\b/.test(scrubbed) ? 1 : 0)
+        + (/\bfirefox\b/.test(scrubbed) ? 1 : 0);
+      const hasDesktopOrTablet =
+        /\bdesktop\b|\bordinateur\b|\btablette\b|\btablet\b/.test(scrubbed);
+      const hasMobileDevice = /\bmobile\b/.test(scrubbed);
+      if (browserHits >= 2 && !hasDesktopOrTablet) return false;
       return (
-        /mobile|desktop|ordinateur|tablette|navigateur|browser|android|ios|windows|mac|chrome|safari/.test(
-          lower,
-        ) && !/configurer des entonnoirs|entonnoir/.test(lower)
+        (hasDesktopOrTablet || hasMobileDevice)
+        && !/configurer des entonnoirs|entonnoir/.test(lower)
       );
     }
     if (id === "referrers") {
@@ -1262,14 +1366,21 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   const altOnly = tabLabels.slice(1);
   const tabOpts = { exactTabMatch: Boolean(target.exactTabMatch) };
   let tabOk = false;
-  const heroWidget = target.id === "devices" || target.id === "referrers";
-  if (heroWidget && (await widgetBodyLooksReady(card, target.id))) {
+  // Never skip devices: Navigateurs is often selected by default and must be switched.
+  if (
+    target.id === "referrers"
+    && (await widgetBodyLooksReady(card, target.id))
+  ) {
     tabOk = true;
   }
   const maxAttempts = target.id === "popular_products" ? 4 : 4;
   for (let attempt = 0; attempt < maxAttempts && !tabOk; attempt += 1) {
     if (target.id === "popular_pages") {
       tabOk = await activatePagesSuperieuresTab(page, card);
+    } else if (target.id === "popular_products") {
+      tabOk = await activateProduitsPopulairesTab(page, card);
+    } else if (target.id === "devices") {
+      tabOk = await activateAppareilsTab(page, card);
     } else if (typeof target.tabIndex === "number") {
       tabOk = await clickTabByIndexOnCard(page, card, target.tabIndex);
     }
@@ -1330,18 +1441,48 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   }
 
   if (target.id === "popular_products") {
-    const productsActive = await isTabActiveOnCard(
-      page,
-      card,
-      "Produits populaires",
-      ["Popular products", "Top products"],
-    );
-    if (!productsActive) {
-      console.warn(
-        "[card:popular_products] forcing tab index 1 (Produits populaires)",
+    for (let fix = 0; fix < 3; fix += 1) {
+      const productsActive = await isTabActiveOnCard(
+        page,
+        card,
+        "Produits populaires",
+        ["Popular products", "Top products"],
       );
-      await clickTabByIndexOnCard(page, card, 1);
+      if (productsActive) break;
+      console.warn(
+        `[card:popular_products] still on Pages — retry Produits populaires ${fix + 1}`,
+      );
+      await activateProduitsPopulairesTab(page, card);
+      if (!(await isTabActiveOnCard(
+        page,
+        card,
+        "Produits populaires",
+        ["Popular products", "Top products"],
+      ))) {
+        await clickTabByIndexOnCard(page, card, 1);
+      }
       await new Promise((r) => setTimeout(r, 3000));
+    }
+  }
+
+  if (target.id === "devices") {
+    for (let fix = 0; fix < 4; fix += 1) {
+      const appareilsActive = await isTabActiveOnCard(
+        page,
+        card,
+        "Appareils",
+        ["Devices"],
+      );
+      const bodyOk = await widgetBodyLooksReady(card, "devices");
+      if (appareilsActive && bodyOk) break;
+      console.warn(
+        `[card:devices] Navigateurs still active or body wrong — force Appareils ${fix + 1}`,
+      );
+      await activateAppareilsTab(page, card);
+      await clickTabOnCard(page, card, "Appareils", ["Devices"], {
+        exactTabMatch: true,
+      });
+      await new Promise((r) => setTimeout(r, 2200));
     }
   }
 
@@ -1360,6 +1501,9 @@ async function prepareWidgetCard(page, target, existingCard = null) {
       console.warn(
         `[card:${target.id}] body not ready (wrong widget or tab still loading) — retry ${check + 1}`,
       );
+      if (target.id === "devices") {
+        await activateAppareilsTab(page, card);
+      }
       await clickTabOnCard(
         page,
         card,
@@ -1547,7 +1691,11 @@ async function downloadWidgetPng(page, downloadDir, target, outPath, existingCar
       target.activeTab,
       tabLabels.slice(1),
     );
-    if (!active) {
+    const bodyOk = await widgetBodyLooksReady(card, target.id);
+    if (!active || !bodyOk) {
+      if (target.id === "devices") {
+        await activateAppareilsTab(page, card);
+      }
       await clickTabOnCard(
         page,
         card,
@@ -1555,6 +1703,17 @@ async function downloadWidgetPng(page, downloadDir, target, outPath, existingCar
         target.altActiveTabs || [],
         tabOpts,
       );
+      await new Promise((r) => setTimeout(r, 2800));
+    }
+  } else if (target.id === "popular_products") {
+    const productsActive = await isTabActiveOnCard(
+      page,
+      card,
+      "Produits populaires",
+      ["Popular products", "Top products"],
+    );
+    if (!productsActive) {
+      await activateProduitsPopulairesTab(page, card);
       await new Promise((r) => setTimeout(r, 2800));
     }
   }
