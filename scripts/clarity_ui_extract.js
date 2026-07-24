@@ -31,7 +31,7 @@ const puppeteer = require("puppeteer");
 const { puppeteerLaunchOptions } = require("./puppeteer_chrome");
 
 // Hi-DPI captures (3×) for readable charts in PowerPoint placeholders.
-const CLARITY_UI_CAPTURE_VERSION = "hidpi-v8";
+const CLARITY_UI_CAPTURE_VERSION = "hidpi-v9";
 const BROWSER_VIEWPORT = {
   width: 1920,
   height: 1080,
@@ -944,6 +944,18 @@ async function activatePagesSuperieuresTab(page, cardHandle) {
 }
 
 async function activateProduitsPopulairesTab(page, cardHandle) {
+  // Prefer coordinate click — Clarity React tabs often ignore bare el.click().
+  const clickedViaCoords = await clickTabOnCard(
+    page,
+    cardHandle,
+    "Produits populaires",
+    ["Popular products", "Top products"],
+    { exactTabMatch: true },
+  );
+  if (clickedViaCoords) {
+    await new Promise((r) => setTimeout(r, 600));
+    return true;
+  }
   const clicked = await cardHandle.evaluate((card) => {
     function norm(t) {
       return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -954,6 +966,7 @@ async function activateProduitsPopulairesTab(page, cardHandle) {
       "top products",
     ]);
     const picks = [];
+    const cardRect = card.getBoundingClientRect();
     for (const el of card.querySelectorAll(
       '[role="tab"], button, a, span, li, div[role="button"]',
     )) {
@@ -963,6 +976,7 @@ async function activateProduitsPopulairesTab(page, cardHandle) {
       if (!wanted.has(key)) continue;
       const rect = el.getBoundingClientRect();
       if (rect.width < 30 || rect.height < 12) continue;
+      if (rect.top - cardRect.top > 90) continue;
       picks.push({
         el,
         key,
@@ -979,9 +993,84 @@ async function activateProduitsPopulairesTab(page, cardHandle) {
     picks[0].el.click();
     return true;
   });
-  if (!clicked) return false;
-  await new Promise((r) => setTimeout(r, 400));
+  if (!clicked) {
+    // Last resort: second tab in the Pages/Produits header.
+    return clickTabByIndexOnCard(page, cardHandle, 1);
+  }
+  await new Promise((r) => setTimeout(r, 600));
   return true;
+}
+
+/**
+ * Which tab is selected on the shared Pages/Produits widget.
+ * Clarity often omits aria-selected — fall back to underline / border style.
+ */
+async function pagesProductsActiveTab(cardHandle) {
+  return cardHandle.evaluate((card) => {
+    function norm(t) {
+      return (t || "").replace(/\s+/g, " ").trim().toLowerCase();
+    }
+    const cardRect = card.getBoundingClientRect();
+    const pagesWanted = new Set(["pages supérieures", "top pages"]);
+    const productsWanted = new Set([
+      "produits populaires",
+      "popular products",
+      "top products",
+    ]);
+    const candidates = [];
+    for (const el of card.querySelectorAll(
+      '[role="tab"], button, a, span, li, div[role="button"]',
+    )) {
+      const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
+      if (!raw || raw.length > 40) continue;
+      const key = norm(raw);
+      let kind = null;
+      if (pagesWanted.has(key)) kind = "pages";
+      else if (productsWanted.has(key)) kind = "products";
+      else continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 24 || rect.height < 10) continue;
+      if (rect.top - cardRect.top > 90) continue;
+      const style = window.getComputedStyle(el);
+      let score = 0;
+      if (el.getAttribute("aria-selected") === "true") score += 100;
+      if (el.getAttribute("aria-current") === "true" || el.getAttribute("aria-current") === "page") {
+        score += 80;
+      }
+      const cls = `${el.className || ""}`.toLowerCase();
+      if (/\b(active|selected|is-selected|isActive)\b/.test(cls)) score += 50;
+      // Selected Clarity tabs use a colored bottom border / underline.
+      const bb = style.borderBottomWidth || "0";
+      const bbColor = style.borderBottomColor || "";
+      if (parseFloat(bb) >= 2 && !/rgba?\(0,\s*0,\s*0,\s*0\)|transparent/i.test(bbColor)) {
+        score += 40;
+      }
+      const fw = parseInt(style.fontWeight || "400", 10);
+      if (fw >= 600) score += 15;
+      let p = el.parentElement;
+      for (let i = 0; i < 2 && p; i += 1) {
+        if (p.getAttribute("aria-selected") === "true") score += 60;
+        const pcls = `${p.className || ""}`.toLowerCase();
+        if (/\b(active|selected|is-selected)\b/.test(pcls)) score += 30;
+        const ps = window.getComputedStyle(p);
+        if (parseFloat(ps.borderBottomWidth || "0") >= 2) score += 25;
+        p = p.parentElement;
+      }
+      candidates.push({ kind, score, left: rect.left });
+    }
+    if (!candidates.length) return "unknown";
+    candidates.sort((a, b) => b.score - a.score || a.left - b.left);
+    if (candidates[0].score < 20) return "unknown";
+    // If both score similarly, prefer the higher one only when clearly ahead.
+    if (
+      candidates.length > 1
+      && candidates[0].kind !== candidates[1].kind
+      && candidates[0].score - candidates[1].score < 15
+    ) {
+      return "unknown";
+    }
+    return candidates[0].kind;
+  });
 }
 
 async function activateAppareilsTab(page, cardHandle) {
@@ -1393,6 +1482,12 @@ async function prepareWidgetCard(page, target, existingCard = null) {
       if (await popularPagesTabShowsData(card)) break;
       continue;
     }
+    if (target.id === "popular_products") {
+      const which = await pagesProductsActiveTab(card);
+      if (which === "products") break;
+      // Do NOT break when neither tab reports active — Pages is often still selected.
+      continue;
+    }
     const active = await isTabActiveOnCard(
       page,
       card,
@@ -1400,15 +1495,6 @@ async function prepareWidgetCard(page, target, existingCard = null) {
       altOnly,
     );
     if (active) break;
-    if (target.id === "popular_products") {
-      const pagesStill = await isTabActiveOnCard(
-        page,
-        card,
-        "Pages supérieures",
-        ["Top pages"],
-      );
-      if (!pagesStill) break;
-    }
   }
   if (!tabOk) {
     console.warn(`[card:${target.id}] tab not found: ${target.activeTab}`);
@@ -1441,27 +1527,23 @@ async function prepareWidgetCard(page, target, existingCard = null) {
   }
 
   if (target.id === "popular_products") {
-    for (let fix = 0; fix < 3; fix += 1) {
-      const productsActive = await isTabActiveOnCard(
-        page,
-        card,
-        "Produits populaires",
-        ["Popular products", "Top products"],
-      );
-      if (productsActive) break;
+    for (let fix = 0; fix < 5; fix += 1) {
+      const which = await pagesProductsActiveTab(card);
+      if (which === "products") break;
       console.warn(
-        `[card:popular_products] still on Pages — retry Produits populaires ${fix + 1}`,
+        `[card:popular_products] tab=${which} — force Produits populaires ${fix + 1}`,
       );
       await activateProduitsPopulairesTab(page, card);
-      if (!(await isTabActiveOnCard(
-        page,
-        card,
-        "Produits populaires",
-        ["Popular products", "Top products"],
-      ))) {
-        await clickTabByIndexOnCard(page, card, 1);
-      }
-      await new Promise((r) => setTimeout(r, 3000));
+      await clickTabByIndexOnCard(page, card, 1);
+      await new Promise((r) => setTimeout(r, 2800));
+    }
+    const whichFinal = await pagesProductsActiveTab(card);
+    if (whichFinal !== "products") {
+      console.warn(
+        `[card:popular_products] still on ${whichFinal} after retries — capture may be wrong`,
+      );
+    } else {
+      console.log("[card:popular_products] Produits populaires tab confirmed");
     }
   }
 
@@ -1552,6 +1634,15 @@ async function screenshotPreparedCard(page, target, card, outPath) {
       return null;
     }
   }
+  if (target.id === "popular_products") {
+    const which = await pagesProductsActiveTab(card);
+    if (which !== "products") {
+      console.warn(
+        `[card:popular_products] refusing screenshot — active tab is ${which}`,
+      );
+      return null;
+    }
+  }
   await dismissMenus(page);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
   if (fs.existsSync(outPath)) {
@@ -1581,7 +1672,7 @@ async function captureWidgetCard(page, target, outDir, downloadDir) {
   return written ? chartPathAbsolute(written) : null;
 }
 
-/** Pages supérieures + Produits populaires share one widget — capture both tabs on the same card. */
+/** Pages + Produits share one widget — force each tab, then screenshot (export ignores tab). */
 async function captureSharedTabWidgets(page, targets, outDir, downloadDir) {
   const sample = targets[0];
   const card = await findWidgetCardHandleWithScroll(
@@ -1608,9 +1699,31 @@ async function captureSharedTabWidgets(page, targets, outDir, downloadDir) {
         results[target.id] = null;
         continue;
       }
-      let written = await downloadWidgetPng(page, downloadDir, target, cardOut, prepared);
+
+      // Always re-assert the tab right before capture — shared card can stick on Pages.
+      if (target.id === "popular_products") {
+        for (let i = 0; i < 4; i += 1) {
+          if ((await pagesProductsActiveTab(prepared)) === "products") break;
+          await activateProduitsPopulairesTab(page, prepared);
+          await new Promise((r) => setTimeout(r, 2200));
+        }
+        if ((await pagesProductsActiveTab(prepared)) !== "products") {
+          console.warn(
+            "[card:popular_products] could not activate Produits populaires — skip",
+          );
+          results[target.id] = null;
+          continue;
+        }
+      } else if (target.id === "popular_pages") {
+        await activatePagesSuperieuresTab(page, prepared);
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+
+      // Prefer element screenshot for shared tabs: Clarity PNG export often
+      // freezes the default "Pages supérieures" view regardless of UI tab.
+      let written = await screenshotPreparedCard(page, target, prepared, cardOut);
       if (!written) {
-        written = await screenshotPreparedCard(page, target, prepared, cardOut);
+        written = await downloadWidgetPng(page, downloadDir, target, cardOut, prepared);
       }
       results[target.id] = written ? chartPathAbsolute(written) : null;
     } catch (err) {
@@ -1706,15 +1819,17 @@ async function downloadWidgetPng(page, downloadDir, target, outPath, existingCar
       await new Promise((r) => setTimeout(r, 2800));
     }
   } else if (target.id === "popular_products") {
-    const productsActive = await isTabActiveOnCard(
-      page,
-      card,
-      "Produits populaires",
-      ["Popular products", "Top products"],
-    );
-    if (!productsActive) {
+    // Always force the tab — false "already active" was leaving Pages selected.
+    for (let i = 0; i < 4; i += 1) {
+      if ((await pagesProductsActiveTab(card)) === "products") break;
       await activateProduitsPopulairesTab(page, card);
-      await new Promise((r) => setTimeout(r, 2800));
+      await new Promise((r) => setTimeout(r, 2200));
+    }
+    if ((await pagesProductsActiveTab(card)) !== "products") {
+      console.warn(
+        "[card:popular_products] Produits tab not active before export — abort download",
+      );
+      return null;
     }
   }
 
@@ -1756,6 +1871,20 @@ async function downloadWidgetPng(page, downloadDir, target, outPath, existingCar
 
   const classified = classifyPngFilename(path.basename(downloaded));
   if (classified && classified !== target.id) {
+    const pagesProductsConflict =
+      (target.id === "popular_products" && classified === "popular_pages")
+      || (target.id === "popular_pages" && classified === "popular_products");
+    if (pagesProductsConflict) {
+      console.warn(
+        `[card:${target.id}] download is ${classified} — rejecting wrong tab export`,
+      );
+      try {
+        fs.unlinkSync(downloaded);
+      } catch (_) {
+        /* ignore */
+      }
+      return null;
+    }
     console.warn(
       `[card:${target.id}] download filename suggests ${classified} — keeping for ${target.id}`,
     );
