@@ -19,6 +19,7 @@ clients:
   - id: cchabitat
     name: CC-Habitat.com
     website: https://www.cc-habitat.com
+    # Not in cron / docker_run_all_clients (manual only).
     # GSC + GMB use cchabitat.seo@gmail.com (not the agency OAuth token).
     google_oauth_account: cchabitat
     report_profile:

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run all production clients in Docker, then upload each PPTX to Google Drive.
+# Run production clients in Docker, then upload each PPTX to Google Drive.
+# Clients: digitify, origincbd, deepcleaning, guivarche (cchabitat excluded).
 #
 # Cron / monthly task — call with NO month (auto YYYY-MM from today + .env):
 #   ./scripts/docker_run_all_clients.sh
