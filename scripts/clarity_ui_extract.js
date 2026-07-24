@@ -2137,6 +2137,58 @@ async function runRecordMode({
   }
 }
 
+const _CLARITY_AGENCY_IDS = [
+  "deepcleaning",
+  "origincbd",
+  "digitify",
+  "guivarche",
+  "cchabitat",
+];
+
+/**
+ * Re-save the live cookies to the session JSON (and the shared/agency copies)
+ * after a successful capture. Microsoft auth cookies use a sliding window, so
+ * refreshing them on every run keeps the session from expiring between reports.
+ */
+async function resaveClaritySession(page, sessionPath, raw) {
+  try {
+    const client = await page.target().createCDPSession();
+    const { cookies } = await client.send("Network.getAllCookies");
+    if (!cookies || !cookies.length) return;
+    const storage = await page.evaluate(() => {
+      const local = {};
+      for (let i = 0; i < localStorage.length; i += 1) {
+        const k = localStorage.key(i);
+        local[k] = localStorage.getItem(k);
+      }
+      return { localStorage: local, sessionStorage: {} };
+    });
+    const payload = {
+      cookies,
+      storage,
+      url: (raw && raw.url) || page.url(),
+    };
+    const text = JSON.stringify(payload, null, 2);
+    fs.writeFileSync(sessionPath, text, "utf-8");
+    const dir = path.dirname(sessionPath);
+    const copies = new Set([
+      path.join(dir, "clarity-shared.json"),
+      ..._CLARITY_AGENCY_IDS.map((id) => path.join(dir, `clarity-${id}.json`)),
+    ]);
+    for (const target of copies) {
+      if (path.resolve(target) === path.resolve(sessionPath)) continue;
+      try {
+        fs.writeFileSync(target, text, "utf-8");
+      } catch (_) {
+        /* ignore individual copy failures */
+      }
+    }
+    console.log("[clarity] session cookies refreshed (sliding renewal)");
+  } catch (err) {
+    console.warn(`[clarity] cookie re-save skipped: ${err.message}`);
+  }
+}
+
 async function main() {
   const {
     session,
@@ -2304,6 +2356,10 @@ async function main() {
   }
 
   enhanceCapturedPngs(path.dirname(outPath));
+
+  // Sliding renewal: re-save the (still valid) cookies so the Microsoft
+  // session keeps working month to month without another manual VNC login.
+  await resaveClaritySession(page, sessionPath, raw);
 
   const payload = {
     captured_at: new Date().toISOString(),

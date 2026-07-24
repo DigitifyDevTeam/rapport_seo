@@ -134,6 +134,9 @@ def main() -> int:
         print("")
         print("In the noVNC browser window:")
         print("  1) Sign in to Microsoft Clarity if asked.")
+        print("     IMPORTANT: tick 'Rester connecté' / 'Keep me signed in'")
+        print("     so a PERSISTENT cookie is saved (otherwise the session")
+        print("     dies after one run and reports come back empty).")
         if project_id:
             print(f"  2) Open the project dashboard (id: {project_id}).")
         else:
