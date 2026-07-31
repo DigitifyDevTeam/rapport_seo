@@ -101,7 +101,8 @@ clients:
       seo_pack: Pack PRO +
       seo_since: "—"
     ga4:
-      property_id: "395375607"
+      # Live property (OAuth account has access). Old id 395375607 returns 403.
+      property_id: "538491692"
       organic_channel: "Organic Search"
       ui_charts_dir: scripts/clients/guivarche/ga4_assets
     gsc:
