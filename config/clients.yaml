@@ -122,6 +122,14 @@ clients:
       ui_skip_widgets:
         - popular_products
       pptx_hide_popular_products: true
+    simpleserp:
+      projects:
+        - id: guivarche
+          label: Guivarche
+          shared_url: https://app.simpleserp.io/shared/0afa0719-07ac-4bce-9802-f999960d6225
+        - id: maillard
+          label: Maillard
+          shared_url: https://app.simpleserp.io/shared/9af8870c-de85-4c95-a194-0e88733564e4
     delivery:
       emails: []
 

@@ -14,8 +14,8 @@ from src.config import PROJECT_ROOT, TEMPLATE_PATH
 logger = logging.getLogger(__name__)
 
 # Keep in sync with scripts/build_template.py TEMPLATE_BUILD_VERSION.
-EXPECTED_TEMPLATE_VERSION = "2026-08-v10-gmb-no-bookings"
-EXPECTED_SLIDE_COUNT = 15
+EXPECTED_TEMPLATE_VERSION = "2026-08-v12-serp-fit-history"
+EXPECTED_SLIDE_COUNT = 19
 
 
 def _version_file_for(pptx_path: Path) -> Path:

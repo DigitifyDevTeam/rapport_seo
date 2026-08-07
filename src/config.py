@@ -37,6 +37,7 @@ class ClientConfig:
     gsc: dict[str, Any] = field(default_factory=dict)
     gmb: dict[str, Any] = field(default_factory=dict)
     clarity: dict[str, Any] = field(default_factory=dict)
+    simpleserp: dict[str, Any] = field(default_factory=dict)
     delivery: dict[str, Any] = field(default_factory=dict)
     report_profile: dict[str, str] = field(default_factory=dict)
     # When set (e.g. ``cchabitat``), GSC/GMB APIs and GMB UI use a dedicated
@@ -168,6 +169,7 @@ def _to_client(entry: dict[str, Any], defaults: dict[str, Any]) -> ClientConfig:
         gsc=entry.get("gsc") or {},
         gmb=gmb,
         clarity=clarity,
+        simpleserp=dict(entry.get("simpleserp") or {}),
         delivery=entry.get("delivery") or {},
         report_profile=_normalize_report_profile(entry.get("report_profile")),
         google_oauth_account=str(entry.get("google_oauth_account") or "").strip(),

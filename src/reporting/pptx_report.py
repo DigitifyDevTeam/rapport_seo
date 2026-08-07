@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.enum.text import PP_ALIGN
 from pptx.util import Pt
 
 from src.reporting.organic_performance_table import add_organic_performance_table
@@ -54,10 +55,33 @@ _KPI_DELTA_KEYS = (
 # Fractions of total table width per column (must sum to 1.0).
 _TABLE_COLUMN_WIDTHS: dict[str, tuple[float, ...]] = {
     "table_top_pages": (0.68, 0.16, 0.16),
+    "table_keyword_compare_1": (0.34, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11),
+    "table_keyword_compare_2": (0.34, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11),
+    "table_keyword_compare_3": (0.34, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11),
+    "table_keyword_compare_4": (0.34, 0.11, 0.11, 0.11, 0.11, 0.11, 0.11),
 }
 
 # Inset applied on each side of chart/screenshot placeholders (EMU fractions).
 _PICTURE_MARGIN_RATIO = 0.04
+
+_KEYWORD_COMPARE_SUBHEADERS = (
+    "Mot-clé",
+    "Current",
+    "Previous",
+    "Change",
+    "Current",
+    "Previous",
+    "Change",
+)
+_KEYWORD_COMPARE_DATA_COLS = (
+    "keyword",
+    "g_current",
+    "g_previous",
+    "g_change",
+    "m_current",
+    "m_previous",
+    "m_change",
+)
 
 
 class ReportBuilder:
@@ -87,6 +111,19 @@ class ReportBuilder:
 
     def build(self, data: dict[str, Any], output_path: Path) -> Path:
         prs = self._open_presentation()
+        serp_slides = int(data.get("keyword_compare_slide_count") or 0)
+        if not data.get("keyword_compare_enabled"):
+            self._delete_slides_with_placeholder(prs, "table_keyword_compare_")
+            self._sync_toc_after_serp(prs, serp_slides=0)
+        else:
+            # Drop trailing unused SERP slots (template always has 4).
+            for part in (4, 3, 2, 1):
+                if part <= serp_slides:
+                    continue
+                self._delete_slides_with_placeholder(
+                    prs, f"table_keyword_compare_{part}",
+                )
+            self._sync_toc_after_serp(prs, serp_slides=serp_slides)
         if data.get("clarity_hide_popular_products"):
             for slide in prs.slides:
                 if self._slide_has_clarity_popular_products(slide):
@@ -109,6 +146,89 @@ class ReportBuilder:
             )
             prs.save(fallback)
             return fallback
+
+    @staticmethod
+    def _slide_text_blob(slide) -> str:
+        parts: list[str] = []
+        for shape in slide.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = (shape.text_frame.text or "").strip()
+            if text:
+                parts.append(text)
+        return "\n".join(parts)
+
+    @classmethod
+    def _delete_slides_with_placeholder(cls, prs, needle: str) -> None:
+        """Remove slides whose text contains *needle* (e.g. Guivarche-only tables)."""
+        drop: list[int] = []
+        for idx, slide in enumerate(prs.slides):
+            if needle in cls._slide_text_blob(slide):
+                drop.append(idx)
+        # Delete from the end so indices stay valid.
+        sld_id_lst = prs.slides._sldIdLst  # noqa: SLF001
+        for idx in reversed(drop):
+            sld_id = sld_id_lst[idx]
+            sld_id_lst.remove(sld_id)
+            logger.info("Removed Guivarche-only slide index %s (%s)", idx, needle)
+
+    @staticmethod
+    def _sync_toc_after_serp(prs, *, serp_slides: int) -> None:
+        """Align ToC page badges after SERP slides are kept or removed.
+
+        Template assumes up to 4 SERP slides (Backlinks=17, Synthèse=19).
+        When *serp_slides* is 0, also drop the SERP ToC row.
+        """
+        if len(prs.slides) < 2:
+            return
+        toc = prs.slides[1]
+        # GMB détail = 12 → SERP starts at 13 → Backlinks = 13 + serp_slides
+        backlinks_page = 13 + max(0, serp_slides)
+        synthese_page = backlinks_page + 2
+
+        if serp_slides <= 0:
+            serp_tops: list[int] = []
+            for shape in toc.shapes:
+                if not getattr(shape, "has_text_frame", False):
+                    continue
+                text = (shape.text_frame.text or "").strip()
+                if "Comparaison mots-clés" in text:
+                    serp_tops.append(int(shape.top))
+            remove_els = []
+            tolerance = 160_000
+            for shape in toc.shapes:
+                near_serp = any(abs(int(shape.top) - top) <= tolerance
+                                for top in serp_tops)
+                if near_serp:
+                    remove_els.append(shape._element)  # noqa: SLF001
+            for el in remove_els:
+                parent = el.getparent()
+                if parent is not None:
+                    parent.remove(el)
+
+        titles_by_top: dict[int, str] = {}
+        for shape in toc.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = (shape.text_frame.text or "").strip()
+            if text in {"Backlinks", "Synthèse finale"}:
+                titles_by_top[int(shape.top)] = text
+        for shape in toc.shapes:
+            if not getattr(shape, "has_text_frame", False):
+                continue
+            text = (shape.text_frame.text or "").strip()
+            if not text.isdigit():
+                continue
+            top = int(shape.top)
+            title = None
+            for t_top, name in titles_by_top.items():
+                if abs(top - t_top) <= 80_000:
+                    title = name
+                    break
+            if title == "Backlinks":
+                ReportBuilder._set_text_frame(shape.text_frame, str(backlinks_page))
+            elif title == "Synthèse finale":
+                ReportBuilder._set_text_frame(shape.text_frame, str(synthese_page))
 
     @staticmethod
     def _slide_has_clarity_popular_products(slide) -> bool:
@@ -304,6 +424,15 @@ class ReportBuilder:
             if name == "table_organic_performance":
                 self._replace_organic_performance(slide, shape, data.get(name))
                 return
+            if name.startswith("table_keyword_compare_"):
+                self._replace_with_keyword_compare_table(
+                    slide, shape, data.get(name), table_name=name,
+                    brand_left=str(data.get("keyword_compare_brand_left")
+                                   or "Guivarche"),
+                    brand_right=str(data.get("keyword_compare_brand_right")
+                                    or "Maillard"),
+                )
+                return
             if name.startswith("table_"):
                 self._replace_with_table(slide, shape, data.get(name),
                                           table_name=name)
@@ -496,6 +625,76 @@ class ReportBuilder:
                 self._format_cell(cell, header=False,
                                     alt=row_idx % 2 == 0)
 
+    def _replace_with_keyword_compare_table(
+        self,
+        slide,
+        shape,
+        df: Any,
+        *,
+        table_name: str,
+        brand_left: str,
+        brand_right: str,
+    ) -> None:
+        """Two-row header: brand groups over Current / Previous / Change."""
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            self._set_text_frame(shape.text_frame, "No data available")
+            return
+
+        data_cols = [c for c in _KEYWORD_COMPARE_DATA_COLS if c in df.columns]
+        if len(data_cols) != 7:
+            self._replace_with_table(slide, shape, df, table_name=table_name)
+            return
+
+        left, top, width, height = (shape.left, shape.top, shape.width,
+                                      shape.height)
+        slide.shapes._spTree.remove(shape._element)  # noqa: SLF001
+
+        rows = len(df) + 2
+        cols = 7
+        table_shape = slide.shapes.add_table(rows, cols, left, top, width,
+                                                height)
+        table = table_shape.table
+        self._apply_column_widths(table, width, table_name)
+        # Keep every row inside the reserved panel height.
+        row_h = max(int(height / rows), 1)
+        for row in table.rows:
+            row.height = row_h
+        compact_font = 8 if len(df) >= 12 else 9
+
+        # Brand header row
+        table.cell(0, 0).text = ""
+        self._format_cell(table.cell(0, 0), header=True, compact=True,
+                          font_size=compact_font)
+        brand_l = table.cell(0, 1)
+        brand_l.text = brand_left
+        brand_l.merge(table.cell(0, 3))
+        self._format_cell(brand_l, header=True, compact=True, center=True,
+                          font_size=compact_font)
+        brand_r = table.cell(0, 4)
+        brand_r.text = brand_right
+        brand_r.merge(table.cell(0, 6))
+        self._format_cell(brand_r, header=True, compact=True, center=True,
+                          font_size=compact_font)
+
+        for col_idx, label in enumerate(_KEYWORD_COMPARE_SUBHEADERS):
+            cell = table.cell(1, col_idx)
+            cell.text = label
+            self._format_cell(cell, header=True, compact=True,
+                              center=(col_idx > 0), font_size=compact_font)
+
+        for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
+            for col_idx, column in enumerate(data_cols):
+                cell = table.cell(row_idx, col_idx)
+                cell.text = _stringify(row[column])
+                self._format_cell(
+                    cell,
+                    header=False,
+                    alt=row_idx % 2 == 0,
+                    compact=True,
+                    center=(col_idx > 0),
+                    font_size=compact_font,
+                )
+
     @staticmethod
     def _apply_column_widths(table, total_width_emu: int,
                               table_name: str) -> None:
@@ -507,16 +706,24 @@ class ReportBuilder:
             table.columns[idx].width = int(total_width_emu * frac / scale)
 
     @staticmethod
-    def _format_cell(cell, *, header: bool, alt: bool = False) -> None:
+    def _format_cell(cell, *, header: bool, alt: bool = False,
+                     compact: bool = False, center: bool = False,
+                     font_size: int | None = None) -> None:
         cell.fill.solid()
         if header:
             cell.fill.fore_color.rgb = HEADER_BG
         else:
             cell.fill.fore_color.rgb = (ROW_ALT if alt
                                           else RGBColor(0xFF, 0xFF, 0xFF))
+        if font_size is not None:
+            size = Pt(font_size)
+        else:
+            size = Pt(9) if compact else Pt(11)
         for paragraph in cell.text_frame.paragraphs:
+            if center:
+                paragraph.alignment = PP_ALIGN.CENTER
             for run in paragraph.runs:
-                run.font.size = Pt(11)
+                run.font.size = size
                 run.font.bold = header
                 run.font.color.rgb = (HEADER_TEXT if header else ROW_TEXT)
 

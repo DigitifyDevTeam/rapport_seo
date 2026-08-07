@@ -66,6 +66,12 @@ from src.reporting.pptx_report import render as render_pptx
 from src.transform import normalize
 from src.transform.kpis import (KpiBundle, compute_kpis, keyword_movements)
 from src.transform.organic_performance import build_organic_performance_slide
+from src.transform.simpleserp_compare import (
+    KEYWORD_COMPARE_MAX_SLIDES,
+    build_compare_frame,
+    rows_from_payload,
+    split_compare_frames,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +153,7 @@ def _ui_capture_disabled(client: ClientConfig) -> set[str]:
     if raw:
         skip.update(part.strip().lower()
                     for part in raw.split(",") if part.strip())
-    for name in ("gmb", "clarity"):
+    for name in ("gmb", "clarity", "simpleserp"):
         section = getattr(client, name, None) or {}
         if isinstance(section, dict) and section.get("ui_enabled") is False:
             skip.add(name)
@@ -462,6 +468,7 @@ def _build_report_data(client: ClientConfig, period: Period,
         "clarity_hide_popular_products": bool(
             (client.clarity or {}).get("pptx_hide_popular_products"),
         ),
+        **_keyword_compare_report_fields(client, period, output_dir),
     }
     data.update(_kpi_text(kpis))
     data["kpi_delta_favorable"] = _kpi_delta_favorable(kpis)
@@ -469,6 +476,147 @@ def _build_report_data(client: ClientConfig, period: Period,
     data.update(chart_paths)
     data["_kpis"] = kpis.to_dict()
     return data
+
+
+def _load_simpleserp_json(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not read SimpleSERP JSON %s: %s", path, exc)
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _keyword_compare_report_fields(
+    client: ClientConfig,
+    period: Period,
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Guivarche-only SERP compare tables; empty / disabled for other clients."""
+    cfg = client.simpleserp or {}
+    projects = list(cfg.get("projects") or [])
+    enabled = bool(projects)
+    empty = pd.DataFrame()
+    brands = {
+        str(p.get("id") or "").strip(): str(p.get("label") or p.get("id") or "").strip()
+        for p in projects
+        if isinstance(p, dict)
+    }
+    brand_left = brands.get("guivarche") or "Guivarche"
+    brand_right = brands.get("maillard") or "Maillard"
+    title_base = f"Comparaison mots-clés ({brand_left} vs {brand_right})"
+
+    base: dict[str, Any] = {
+        "keyword_compare_enabled": enabled,
+        "keyword_compare_slide_count": 0,
+        "keyword_compare_brand_left": brand_left,
+        "keyword_compare_brand_right": brand_right,
+    }
+    for part in range(1, KEYWORD_COMPARE_MAX_SLIDES + 1):
+        base[f"table_keyword_compare_{part}"] = empty
+        base[f"keyword_compare_title_{part}"] = title_base
+    if not enabled:
+        return base
+
+    g_payload = _load_simpleserp_json(output_dir / "simpleserp_guivarche.json")
+    m_payload = _load_simpleserp_json(output_dir / "simpleserp_maillard.json")
+    frame = build_compare_frame(
+        rows_from_payload(g_payload),
+        rows_from_payload(m_payload),
+    )
+    chunks = split_compare_frames(frame)
+    slide_count = len(chunks)
+    base["keyword_compare_slide_count"] = slide_count
+    for idx, chunk in enumerate(chunks, start=1):
+        base[f"table_keyword_compare_{idx}"] = chunk
+        base[f"keyword_compare_title_{idx}"] = (
+            f"{title_base} — {idx}/{slide_count}"
+        )
+    if frame.empty:
+        logger.warning(
+            "[%s] SimpleSERP compare tables empty (missing JSON under %s)",
+            client.id, output_dir,
+        )
+    return base
+
+
+def _simpleserp_payload_stale(payload: dict[str, Any] | None) -> bool:
+    """True when JSON is missing, empty, or not captured with the 1m preset."""
+    if not isinstance(payload, dict):
+        return True
+    if str(payload.get("comparison") or "").strip().lower() != "1m":
+        return True
+    keywords = payload.get("keywords") or []
+    if not isinstance(keywords, list) or len(keywords) < 3:
+        return True
+    prev_ok = 0
+    for row in keywords:
+        if not isinstance(row, dict):
+            continue
+        prev = str(row.get("previous") or "").strip()
+        if prev and prev != "-":
+            prev_ok += 1
+    return prev_ok == 0
+
+
+def _simpleserp_capture_complete(output_dir: Path, cfg: dict[str, Any]) -> bool:
+    projects = list(cfg.get("projects") or [])
+    if not projects:
+        return True
+    for project in projects:
+        if not isinstance(project, dict):
+            continue
+        pid = str(project.get("id") or "").strip()
+        if not pid:
+            continue
+        path = output_dir / f"simpleserp_{pid}.json"
+        if not path.is_file():
+            return False
+        payload = _load_simpleserp_json(path)
+        if _simpleserp_payload_stale(payload):
+            return False
+    return True
+
+
+def _capture_simpleserp_ui(
+    client: ClientConfig,
+    output_dir: Path,
+    period: Period,
+) -> bool:
+    """Scrape public SimpleSERP shared dashboards for Guivarche compare slides."""
+    cfg = client.simpleserp or {}
+    if not cfg.get("projects"):
+        return False
+    if "simpleserp" in _ui_capture_disabled(client):
+        logger.info("[%s] SimpleSERP capture skipped (SEO_REPORT_SKIP_UI_CONNECTORS)",
+                    client.id)
+        return _simpleserp_capture_complete(output_dir, cfg)
+
+    if _simpleserp_capture_complete(output_dir, cfg):
+        logger.info("[%s] SimpleSERP JSON already present under %s",
+                    client.id, output_dir)
+        return True
+
+    script = PROJECT_ROOT / "scripts" / "simpleserp_shared_extract.py"
+    if not script.is_file():
+        logger.error("Missing SimpleSERP extractor: %s", script)
+        return False
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--client", client.id,
+        "--month", period.label,
+    ]
+    logger.info("[%s] running SimpleSERP extract: %s", client.id, " ".join(cmd))
+    try:
+        subprocess.run(cmd, check=True, cwd=str(PROJECT_ROOT))
+    except subprocess.CalledProcessError as exc:
+        logger.error("[%s] SimpleSERP extract failed: %s", client.id, exc)
+        return False
+    return _simpleserp_capture_complete(output_dir, cfg)
 
 
 def _summarize_clarity(df: pd.DataFrame) -> dict[str, str]:
@@ -2148,6 +2296,8 @@ def run_for_client(client: ClientConfig, period: Period) -> ReportArtifacts:
         gmb_cfg_pre = client.gmb or {}
         if not (gmb_cfg_pre.get("business_card_reference") or "").strip():
             _capture_gmb_fiche_if_missing(client, output_dir, period)
+    if client.simpleserp:
+        _capture_simpleserp_ui(client, output_dir, period)
     gmb_cfg = client.gmb or {}
     ref_raw = (gmb_cfg.get("business_card_reference") or "").strip()
     ref_path = Path(ref_raw) if ref_raw else None

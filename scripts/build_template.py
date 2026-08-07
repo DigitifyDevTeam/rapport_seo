@@ -40,7 +40,7 @@ from pptx.util import Inches, Pt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
 # Bump when slide order/structure changes (keep in sync with ensure_template.py).
-TEMPLATE_BUILD_VERSION = "2026-08-v10-gmb-no-bookings"
+TEMPLATE_BUILD_VERSION = "2026-08-v12-serp-fit-history"
 
 
 def resolve_template_path(output: str | None = None) -> Path:
@@ -105,8 +105,9 @@ TOC_ITEMS: list[tuple[str, int]] = [
     ("Top pages (GSC)", 10),
     ("Présence Google Business Profile", 11),
     ("Interactions clients (détail)", 12),
-    ("Backlinks", 13),
-    ("Synthèse finale", 15),
+    ("Comparaison mots-clés (SERP)", 13),
+    ("Backlinks", 17),
+    ("Synthèse finale", 19),
 ]
 
 FONT_TITLE = "Segoe UI"
@@ -850,6 +851,27 @@ def build_gmb_details(prs: Presentation) -> None:
             slide, left, img_top, chart_w, img_h, name)
 
 
+def build_keyword_compare_slide(prs: Presentation, *, part: int = 1) -> None:
+    """Guivarche-only SERP compare (filled/deleted at render time).
+
+    Title is a placeholder so the renderer can inject ``— 1/3`` (or 1/2, 1/4)
+    after the row split is known. No subtitle.
+    """
+    if part not in (1, 2, 3, 4):
+        raise ValueError(f"keyword compare part must be 1..4, got {part}")
+    table_name = f"table_keyword_compare_{part}"
+    slide = _slide_with_title(
+        prs,
+        f"{{{{keyword_compare_title_{part}}}}}",
+        None,
+    )
+    panel_left, panel_top, panel_w, panel_h = _add_content_panel(slide, prs)
+    inner_left, inner_top, inner_w, inner_h = _inner_rect(
+        panel_left, panel_top, panel_w, panel_h)
+    _picture_placeholder(slide, inner_left, inner_top, inner_w, inner_h,
+                          table_name)
+
+
 def _add_clarity_chart_row(
     slide,
     charts: list[tuple[str, str]],
@@ -1144,6 +1166,10 @@ def _build_presentation() -> Presentation:
                        "table_top_pages")
     build_gmb_overview(prs)
     build_gmb_details(prs)
+    build_keyword_compare_slide(prs, part=1)
+    build_keyword_compare_slide(prs, part=2)
+    build_keyword_compare_slide(prs, part=3)
+    build_keyword_compare_slide(prs, part=4)
     build_backlinks_slide(prs, part=1)
     build_backlinks_slide(prs, part=2)
     build_final_summary_slide(prs)

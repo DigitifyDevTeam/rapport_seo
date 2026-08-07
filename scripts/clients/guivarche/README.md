@@ -49,6 +49,30 @@ node scripts/clients/guivarche/clarity_ui_login.js
 python scripts/capture_gmb_performance_url.py guivarche --show
 ```
 
+## SimpleSERP (Guivarche vs Maillard)
+
+Public shared dashboards — no login. The monthly report opens each shared
+URL and clicks the **1m** comparison preset (one-month MoM), then scrapes
+Keyword / Current / Previous / Change.
+
+Tables are split across up to **4 slides** (≈13 rows each) so they stay
+inside the slide panel. Titles look like
+`Comparaison mots-clés (Guivarche vs Maillard) — 1/4`.
+
+| Brand | Shared URL |
+|-------|------------|
+| Guivarche | https://app.simpleserp.io/shared/0afa0719-07ac-4bce-9802-f999960d6225 |
+| Maillard | https://app.simpleserp.io/shared/9af8870c-de85-4c95-a194-0e88733564e4 |
+
+```powershell
+python scripts/simpleserp_shared_extract.py --client guivarche --month 2026-07
+```
+
+Outputs: `outputs/guivarche/<month>/simpleserp_guivarche.json`,
+`simpleserp_maillard.json`.
+
+Skip with `SEO_REPORT_SKIP_UI_CONNECTORS=simpleserp` (reuse existing JSON).
+
 ## Monthly report
 
 ```powershell
