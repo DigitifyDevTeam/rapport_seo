@@ -42,6 +42,16 @@ KPI_DELTA_NEGATIVE_BG = RGBColor(0xE9, 0xD5, 0xFF)
 KPI_DELTA_NEUTRAL = RGBColor(0x64, 0x74, 0x8B)
 KPI_DELTA_NEUTRAL_BG = RGBColor(0xF1, 0xF5, 0xF9)
 
+# Keyword compare brands: Guivarche = teal, Maillard = violet (deck accents).
+SERP_BRAND_LEFT = KPI_DELTA_POSITIVE
+SERP_BRAND_LEFT_BG = KPI_DELTA_POSITIVE_BG
+SERP_BRAND_LEFT_ROW = RGBColor(0xF0, 0xFD, 0xFA)
+SERP_BRAND_LEFT_ROW_ALT = RGBColor(0xCC, 0xFB, 0xF1)
+SERP_BRAND_RIGHT = KPI_DELTA_NEGATIVE
+SERP_BRAND_RIGHT_BG = KPI_DELTA_NEGATIVE_BG
+SERP_BRAND_RIGHT_ROW = RGBColor(0xF5, 0xF3, 0xFF)
+SERP_BRAND_RIGHT_ROW_ALT = RGBColor(0xE9, 0xD5, 0xFF)
+
 _KPI_DELTA_KEYS = (
     "sessions",
     "users",
@@ -661,39 +671,81 @@ class ReportBuilder:
             row.height = row_h
         compact_font = 8 if len(df) >= 12 else 9
 
-        # Brand header row
+        def _brand_for_col(col_idx: int) -> str | None:
+            if 1 <= col_idx <= 3:
+                return "left"
+            if 4 <= col_idx <= 6:
+                return "right"
+            return None
+
+        # Brand header row — Guivarche teal, Maillard violet
         table.cell(0, 0).text = ""
         self._format_cell(table.cell(0, 0), header=True, compact=True,
                           font_size=compact_font)
         brand_l = table.cell(0, 1)
         brand_l.text = brand_left
         brand_l.merge(table.cell(0, 3))
-        self._format_cell(brand_l, header=True, compact=True, center=True,
-                          font_size=compact_font)
+        self._format_cell(
+            brand_l, header=True, compact=True, center=True,
+            font_size=compact_font,
+            fill=SERP_BRAND_LEFT, text_color=HEADER_TEXT,
+        )
         brand_r = table.cell(0, 4)
         brand_r.text = brand_right
         brand_r.merge(table.cell(0, 6))
-        self._format_cell(brand_r, header=True, compact=True, center=True,
-                          font_size=compact_font)
+        self._format_cell(
+            brand_r, header=True, compact=True, center=True,
+            font_size=compact_font,
+            fill=SERP_BRAND_RIGHT, text_color=HEADER_TEXT,
+        )
 
         for col_idx, label in enumerate(_KEYWORD_COMPARE_SUBHEADERS):
             cell = table.cell(1, col_idx)
             cell.text = label
-            self._format_cell(cell, header=True, compact=True,
-                              center=(col_idx > 0), font_size=compact_font)
+            brand = _brand_for_col(col_idx)
+            if brand == "left":
+                self._format_cell(
+                    cell, header=True, compact=True, center=True,
+                    font_size=compact_font,
+                    fill=SERP_BRAND_LEFT_BG, text_color=SERP_BRAND_LEFT,
+                )
+            elif brand == "right":
+                self._format_cell(
+                    cell, header=True, compact=True, center=True,
+                    font_size=compact_font,
+                    fill=SERP_BRAND_RIGHT_BG, text_color=SERP_BRAND_RIGHT,
+                )
+            else:
+                self._format_cell(cell, header=True, compact=True,
+                                  font_size=compact_font)
 
         for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
+            alt = row_idx % 2 == 0
             for col_idx, column in enumerate(data_cols):
                 cell = table.cell(row_idx, col_idx)
                 cell.text = _stringify(row[column])
-                self._format_cell(
-                    cell,
-                    header=False,
-                    alt=row_idx % 2 == 0,
-                    compact=True,
-                    center=(col_idx > 0),
-                    font_size=compact_font,
-                )
+                brand = _brand_for_col(col_idx)
+                if brand == "left":
+                    fill = (SERP_BRAND_LEFT_ROW_ALT if alt
+                            else SERP_BRAND_LEFT_ROW)
+                    self._format_cell(
+                        cell, header=False, compact=True, center=True,
+                        font_size=compact_font, fill=fill,
+                        text_color=ROW_TEXT,
+                    )
+                elif brand == "right":
+                    fill = (SERP_BRAND_RIGHT_ROW_ALT if alt
+                            else SERP_BRAND_RIGHT_ROW)
+                    self._format_cell(
+                        cell, header=False, compact=True, center=True,
+                        font_size=compact_font, fill=fill,
+                        text_color=ROW_TEXT,
+                    )
+                else:
+                    self._format_cell(
+                        cell, header=False, alt=alt, compact=True,
+                        font_size=compact_font,
+                    )
 
     @staticmethod
     def _apply_column_widths(table, total_width_emu: int,
@@ -708,9 +760,13 @@ class ReportBuilder:
     @staticmethod
     def _format_cell(cell, *, header: bool, alt: bool = False,
                      compact: bool = False, center: bool = False,
-                     font_size: int | None = None) -> None:
+                     font_size: int | None = None,
+                     fill: RGBColor | None = None,
+                     text_color: RGBColor | None = None) -> None:
         cell.fill.solid()
-        if header:
+        if fill is not None:
+            cell.fill.fore_color.rgb = fill
+        elif header:
             cell.fill.fore_color.rgb = HEADER_BG
         else:
             cell.fill.fore_color.rgb = (ROW_ALT if alt
@@ -719,13 +775,17 @@ class ReportBuilder:
             size = Pt(font_size)
         else:
             size = Pt(9) if compact else Pt(11)
+        if text_color is not None:
+            color = text_color
+        else:
+            color = HEADER_TEXT if header else ROW_TEXT
         for paragraph in cell.text_frame.paragraphs:
             if center:
                 paragraph.alignment = PP_ALIGN.CENTER
             for run in paragraph.runs:
                 run.font.size = size
                 run.font.bold = header
-                run.font.color.rgb = (HEADER_TEXT if header else ROW_TEXT)
+                run.font.color.rgb = color
 
 
 def _image_pixel_size(path: Path) -> tuple[int, int] | None:
