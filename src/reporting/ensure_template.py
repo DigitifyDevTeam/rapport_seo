@@ -14,7 +14,7 @@ from src.config import PROJECT_ROOT, TEMPLATE_PATH
 logger = logging.getLogger(__name__)
 
 # Keep in sync with scripts/build_template.py TEMPLATE_BUILD_VERSION.
-EXPECTED_TEMPLATE_VERSION = "2026-06-v9-summary-brief-fit"
+EXPECTED_TEMPLATE_VERSION = "2026-08-v10-gmb-no-bookings"
 EXPECTED_SLIDE_COUNT = 15
 
 

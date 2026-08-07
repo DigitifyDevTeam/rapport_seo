@@ -40,7 +40,7 @@ from pptx.util import Inches, Pt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_PATH = PROJECT_ROOT / "templates" / "seo_report_template.pptx"
 # Bump when slide order/structure changes (keep in sync with ensure_template.py).
-TEMPLATE_BUILD_VERSION = "2026-06-v9-summary-brief-fit"
+TEMPLATE_BUILD_VERSION = "2026-08-v10-gmb-no-bookings"
 
 
 def resolve_template_path(output: str | None = None) -> Path:
@@ -757,7 +757,7 @@ def build_table_slide(prs: Presentation, title: str, subtitle: str,
 
 
 def build_gmb_overview(prs: Presentation) -> None:
-    """Slide 11: Knowledge Panel capture + five KPI placeholders (3 + 2 grid)."""
+    """Slide 11: Knowledge Panel capture + four KPI placeholders (2x2 grid)."""
     slide = _slide_with_title(
         prs,
         "Présence Google Business Profile",
@@ -789,39 +789,30 @@ def build_gmb_overview(prs: Presentation) -> None:
     kpi_cards = [
         ("Interactions totales", "{{gmb_interactions}}"),
         ("Appels", "{{gmb_calls}}"),
-        ("Réservations", "{{gmb_bookings}}"),
         ("Itinéraires", "{{gmb_directions}}"),
         ("Clics vers le site Web", "{{gmb_website_clicks}}"),
     ]
     kpi_left = card_left + card_w + split_gap
     kpi_area_w = inner_left + inner_w - kpi_left
-    cols = 3
+    cols = 2
+    rows = 2
     gap_x = GRID_GAP
     gap_y = GRID_GAP
     kpi_w = int((kpi_area_w - gap_x * (cols - 1)) / cols)
-    rows = 2
-    # KPI height: between the original full split and the previous 0.92" cap.
-    kpi_h_natural = int((card_h - gap_y * (rows - 1)) / rows)
-    kpi_h = min(kpi_h_natural, int(Inches(1.22)))
-    kpi_h = max(kpi_h, int(Inches(1.05)))
+    # Fill the right column: larger 2x2 cards now that bookings is gone.
+    kpi_h = int((card_h - gap_y * (rows - 1)) / rows)
     kpi_grid_h = rows * kpi_h + (rows - 1) * gap_y
     kpi_block_top = card_top + max(0, (card_h - kpi_grid_h) // 2)
     for idx, (label, value) in enumerate(kpi_cards):
         row, col = divmod(idx, cols)
-        if row == 1:
-            row2_count = len(kpi_cards) - cols
-            row2_total_w = kpi_w * row2_count + gap_x * (row2_count - 1)
-            row2_start = kpi_left + (kpi_area_w - row2_total_w) / 2
-            left = row2_start + (idx - cols) * (kpi_w + gap_x)
-        else:
-            left = kpi_left + col * (kpi_w + gap_x)
+        left = kpi_left + col * (kpi_w + gap_x)
         top = kpi_block_top + row * (kpi_h + gap_y)
         _add_kpi_card(slide, left, top, kpi_w, kpi_h, label, value, "",
                        variant_index=idx)
 
 
 def build_gmb_details(prs: Presentation) -> None:
-    """Slide 12: five Performance tab screenshots (3 + 2 grid)."""
+    """Slide 12: four Performance tab screenshots (2x2 grid)."""
     slide = _slide_with_title(
         prs,
         "Interactions clients (détail)",
@@ -834,14 +825,13 @@ def build_gmb_details(prs: Presentation) -> None:
     charts = [
         ("Vue d'ensemble", "chart_gmb_overview"),
         ("Appels", "chart_gmb_calls"),
-        ("Réservations", "chart_gmb_bookings"),
         ("Itinéraires", "chart_gmb_directions"),
         ("Clics vers le site Web", "chart_gmb_website_clicks"),
     ]
-    cols = 3
+    cols = 2
     gap_x = GRID_GAP
-    gap_y = Inches(0.18)
-    caption_h = Inches(0.3)
+    gap_y = Inches(0.16)
+    caption_h = Inches(0.28)
     chart_w, chart_h = _fit_grid(len(charts), cols, inner_w, inner_h, gap_x, gap_y)
     chart_h = int(chart_h - caption_h)
     total_w = chart_w * cols + gap_x * (cols - 1)
@@ -849,16 +839,10 @@ def build_gmb_details(prs: Presentation) -> None:
     start_top = inner_top
     for idx, (caption, name) in enumerate(charts):
         row, col = divmod(idx, cols)
-        if row == 1:
-            row2_count = len(charts) - cols
-            row2_w = chart_w * row2_count + gap_x * (row2_count - 1)
-            r2_left = inner_left + int((inner_w - row2_w) / 2)
-            left = r2_left + (idx - cols) * (chart_w + gap_x)
-        else:
-            left = start_left + col * (chart_w + gap_x)
+        left = start_left + col * (chart_w + gap_x)
         top = start_top + row * (chart_h + gap_y + caption_h)
         _add_text_box(slide, left, top, chart_w, caption_h,
-                       caption, size=11, bold=True, color=PRIMARY,
+                       caption, size=12, bold=True, color=PRIMARY,
                        align=PP_ALIGN.CENTER)
         img_top = top + caption_h
         img_h = chart_h
