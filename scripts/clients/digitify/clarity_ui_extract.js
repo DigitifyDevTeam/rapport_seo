@@ -4,7 +4,7 @@
  *   node scripts/clients/digitify/clarity_ui_extract.js 2026-04
  *   node scripts/clients/digitify/clarity_ui_extract.js 2026-04 --record
  *
- * Project id wck8kvahx2 (config/clients.yaml, override via .env).
+ * Project id k23l3ye7zj (config/clients.yaml, override via .env).
  */
 const { spawnSync } = require("child_process");
 const path = require("path");
@@ -30,7 +30,7 @@ const args = [
   "--session", session,
   "--out", outJson,
   "--screenshot", screenshot,
-  "--project-id", "wck8kvahx2",
+  "--project-id", "k23l3ye7zj",
   "--period-start", periodStart,
   "--period-end", periodEnd,
 ];

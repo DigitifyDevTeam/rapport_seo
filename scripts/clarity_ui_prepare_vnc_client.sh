@@ -20,8 +20,8 @@ PROJECT_ID=""
 case "${CLIENT}" in
   origincbd) PROJECT_ID="iqfjm1ewdj" ;;
   deepcleaning) PROJECT_ID="lfjtuxge3c" ;;
-  digitify) PROJECT_ID="wck8kvahx2" ;;
-  guivarche) PROJECT_ID="k23l3ye7zj" ;;
+  digitify) PROJECT_ID="k23l3ye7zj" ;;
+  guivarche) PROJECT_ID="wck8kvahx2" ;;
   cchabitat) PROJECT_ID="" ;;
 esac
 

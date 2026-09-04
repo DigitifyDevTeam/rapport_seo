@@ -3,7 +3,7 @@
 | Source | ID / URL |
 |--------|----------|
 | GA4 | Property `538491692` (guivarche - GA4) |
-| Clarity | Project `k23l3ye7zj` — https://guivarche-demenagement.fr |
+| Clarity | Project `wck8kvahx2` — https://guivarche-demenagement.fr |
 | GSC | https://guivarche-demenagement.fr/ |
 
 GMB uses the **shared Google account** with DeepCleaning, Origincbd, and Digitify.

@@ -13,7 +13,7 @@ const profile = path.join(root, "outputs", "_sessions", "chrome-profile");
 
 const r = spawnSync(
   process.execPath,
-  [script, "--out", sessionOut, "--profile", profile, "--project-id", "k23l3ye7zj"],
+  [script, "--out", sessionOut, "--profile", profile, "--project-id", "wck8kvahx2"],
   {
     cwd: root,
     stdio: "inherit",

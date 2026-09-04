@@ -83,7 +83,8 @@ clients:
         - "digitify.fr"
       business_card_reference: scripts/clients/digitify/gmb_business_card.png
     clarity:
-      project_id: "wck8kvahx2"
+      # Live tag on digitify.fr (was swapped with Guivarche).
+      project_id: "k23l3ye7zj"
       ui_skip_widgets:
         - popular_products
       pptx_hide_popular_products: true
@@ -118,7 +119,8 @@ clients:
         - "Guivarche"
         - "guivarche-demenagement.fr"
     clarity:
-      project_id: "k23l3ye7zj"
+      # Live tag on guivarche-demenagement.fr (was swapped with Digitify).
+      project_id: "wck8kvahx2"
       ui_skip_widgets:
         - popular_products
       pptx_hide_popular_products: true

@@ -5,7 +5,7 @@ Same automation pattern as **DeepCleaning** (separate session files only).
 | Source | ID / URL |
 |--------|----------|
 | GA4 | Property `366533803` (Digitify - GA4) |
-| Clarity | Project `wck8kvahx2` — https://digitify.fr |
+| Clarity | Project `k23l3ye7zj` — https://digitify.fr |
 | GSC | https://digitify.fr/ |
 
 Sessions: `clarity-digitify.json`, **`gmb-digitify.json`** (same Google account as other
