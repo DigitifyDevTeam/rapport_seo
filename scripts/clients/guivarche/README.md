@@ -73,6 +73,23 @@ Outputs: `outputs/guivarche/<month>/simpleserp_guivarche.json`,
 
 Skip with `SEO_REPORT_SKIP_UI_CONNECTORS=simpleserp` (reuse existing JSON).
 
+### Custom date range (compare tables only)
+
+For a one-off deck with **only** the Guivarche vs Maillard comparison slides
+(custom SimpleSERP dates, no GA4/GSC/GMB/Clarity):
+
+```powershell
+python scripts/run_keyword_compare_only.py --client guivarche --from-date 01/08/2026 --to-date 01/09/2026
+```
+
+On the VPS (Docker):
+
+```bash
+bash scripts/docker_run_keyword_compare.sh guivarche 01/08/2026 01/09/2026
+```
+
+Output: `outputs/guivarche/compare_2026-08-01_2026-09-01/keyword_compare_report.pptx`
+
 ## Monthly report
 
 ```powershell

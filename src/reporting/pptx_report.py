@@ -121,10 +121,12 @@ class ReportBuilder:
 
     def build(self, data: dict[str, Any], output_path: Path) -> Path:
         prs = self._open_presentation()
+        compare_only = bool(data.get("keyword_compare_only"))
         serp_slides = int(data.get("keyword_compare_slide_count") or 0)
         if not data.get("keyword_compare_enabled"):
             self._delete_slides_with_placeholder(prs, "table_keyword_compare_")
-            self._sync_toc_after_serp(prs, serp_slides=0)
+            if not compare_only:
+                self._sync_toc_after_serp(prs, serp_slides=0)
         else:
             # Drop trailing unused SERP slots (template always has 4).
             for part in (4, 3, 2, 1):
@@ -133,7 +135,10 @@ class ReportBuilder:
                 self._delete_slides_with_placeholder(
                     prs, f"table_keyword_compare_{part}",
                 )
-            self._sync_toc_after_serp(prs, serp_slides=serp_slides)
+            if compare_only:
+                self._keep_only_keyword_compare_slides(prs, serp_slides)
+            else:
+                self._sync_toc_after_serp(prs, serp_slides=serp_slides)
         if data.get("clarity_hide_popular_products"):
             for slide in prs.slides:
                 if self._slide_has_clarity_popular_products(slide):
@@ -167,6 +172,26 @@ class ReportBuilder:
             if text:
                 parts.append(text)
         return "\n".join(parts)
+
+    @classmethod
+    def _keep_only_keyword_compare_slides(cls, prs, serp_slides: int) -> None:
+        """Drop every slide except filled keyword-compare table slides."""
+        allowed = {
+            f"table_keyword_compare_{part}"
+            for part in range(1, max(0, serp_slides) + 1)
+        }
+        drop: list[int] = []
+        for idx, slide in enumerate(prs.slides):
+            blob = cls._slide_text_blob(slide)
+            if not any(needle in blob for needle in allowed):
+                drop.append(idx)
+        sld_id_lst = prs.slides._sldIdLst  # noqa: SLF001
+        for idx in reversed(drop):
+            sld_id = sld_id_lst[idx]
+            sld_id_lst.remove(sld_id)
+            logger.info(
+                "Keyword-compare-only mode: removed slide index %s", idx,
+            )
 
     @classmethod
     def _delete_slides_with_placeholder(cls, prs, needle: str) -> None:

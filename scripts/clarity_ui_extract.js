@@ -2292,10 +2292,13 @@ async function resaveClaritySession(page, sessionPath, raw) {
       }
       return { localStorage: local, sessionStorage: {} };
     });
+    // Prefer the live dashboard URL so sibling agency sessions are not stuck
+    // pointing at another client's project (cookies stay shared, project ids do not).
+    const liveUrl = page.url() || (raw && raw.url) || "";
     const payload = {
       cookies,
       storage,
-      url: (raw && raw.url) || page.url(),
+      url: liveUrl,
     };
     const text = JSON.stringify(payload, null, 2);
     fs.writeFileSync(sessionPath, text, "utf-8");
@@ -2307,7 +2310,22 @@ async function resaveClaritySession(page, sessionPath, raw) {
     for (const target of copies) {
       if (path.resolve(target) === path.resolve(sessionPath)) continue;
       try {
-        fs.writeFileSync(target, text, "utf-8");
+        // Refresh cookies/storage for all agency sessions, but keep each
+        // file's own dashboard URL when present (avoids Digitify→Guivarche bleed).
+        let siblingUrl = liveUrl;
+        try {
+          if (fs.existsSync(target)) {
+            const prev = JSON.parse(fs.readFileSync(target, "utf-8"));
+            if (prev && prev.url) siblingUrl = prev.url;
+          }
+        } catch (_) {
+          /* use liveUrl */
+        }
+        fs.writeFileSync(
+          target,
+          JSON.stringify({ cookies, storage, url: siblingUrl }, null, 2),
+          "utf-8",
+        );
       } catch (_) {
         /* ignore individual copy failures */
       }
@@ -2490,9 +2508,11 @@ async function main() {
   // session keeps working month to month without another manual VNC login.
   await resaveClaritySession(page, sessionPath, raw);
 
+  const resolvedProjectId = projectId || extractProjectId(targetUrl) || null;
   const payload = {
     captured_at: new Date().toISOString(),
     capture_version: CLARITY_UI_CAPTURE_VERSION,
+    project_id: resolvedProjectId,
     url: targetUrl,
     period_start: periodStart || null,
     period_end: periodEnd || null,

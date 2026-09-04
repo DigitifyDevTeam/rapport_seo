@@ -28,6 +28,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -723,6 +724,18 @@ def _clarity_kpis_populated(ui_payload: dict[str, Any] | None) -> bool:
     return False
 
 
+def _clarity_payload_project_id(payload: dict[str, Any] | None) -> str:
+    """Project id from ``clarity_ui.json`` (explicit field or dashboard URL)."""
+    if not payload:
+        return ""
+    explicit = str(payload.get("project_id") or "").strip()
+    if explicit:
+        return explicit
+    url = str(payload.get("url") or "")
+    match = re.search(r"/projects/view/([^/?#]+)", url, flags=re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
 def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
                                period: Period) -> bool:
     """True when widget PNGs and ``clarity_ui.json`` match this report period."""
@@ -743,6 +756,23 @@ def _clarity_capture_complete(client: ClientConfig, output_dir: Path,
         payload.get("period_start") != period.start.isoformat()
         or payload.get("period_end") != period.end.isoformat()
     ):
+        return False
+    expected_project = ((client.clarity or {}).get("project_id") or "").strip()
+    captured_project = _clarity_payload_project_id(payload)
+    if expected_project and captured_project and captured_project != expected_project:
+        logger.warning(
+            "[clarity-ui] capture project_id mismatch for %s "
+            "(file=%s expected=%s) — will re-capture",
+            client.id,
+            captured_project,
+            expected_project,
+        )
+        return False
+    if expected_project and not captured_project:
+        logger.info(
+            "[clarity-ui] capture missing project_id for %s — will re-capture",
+            client.id,
+        )
         return False
     if not _clarity_kpis_populated(payload):
         logger.info(
