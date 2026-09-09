@@ -74,6 +74,11 @@ _TABLE_COLUMN_WIDTHS: dict[str, tuple[float, ...]] = {
 # Inset applied on each side of chart/screenshot placeholders (EMU fractions).
 _PICTURE_MARGIN_RATIO = 0.04
 
+# ToC rows share the same Y across columns — match by column + row, never Y alone.
+_TOC_Y_TOLERANCE = 160_000  # EMU (~0.17")
+_TOC_ENTRY_MAX_HEIGHT = 600_000  # EMU — skip the full-width content panel
+_TOC_SERP_TITLE = "Comparaison mots-clés"
+
 _KEYWORD_COMPARE_SUBHEADERS = (
     "Mot-clé",
     "Current",
@@ -208,62 +213,140 @@ class ReportBuilder:
             logger.info("Removed Guivarche-only slide index %s (%s)", idx, needle)
 
     @staticmethod
-    def _sync_toc_after_serp(prs, *, serp_slides: int) -> None:
+    def _toc_shape_text(shape) -> str:
+        if not getattr(shape, "has_text_frame", False):
+            return ""
+        return (shape.text_frame.text or "").strip()
+
+    @staticmethod
+    def _toc_same_column(shape, *, anchor_left: int, slide_mid: int) -> bool:
+        return (int(shape.left) < slide_mid) == (anchor_left < slide_mid)
+
+    @staticmethod
+    def _toc_is_entry_shape(shape) -> bool:
+        """True for badge / page / title shapes, false for the content panel."""
+        try:
+            return int(shape.height) <= _TOC_ENTRY_MAX_HEIGHT
+        except (TypeError, ValueError):
+            return False
+
+    @classmethod
+    def _iter_toc_entry_shapes(cls, toc, *, anchor_left: int, slide_mid: int):
+        for shape in toc.shapes:
+            if not cls._toc_is_entry_shape(shape):
+                continue
+            if not cls._toc_same_column(
+                    shape, anchor_left=anchor_left, slide_mid=slide_mid):
+                continue
+            yield shape
+
+    @classmethod
+    def _remove_toc_entry_row(cls, toc, title_shape, *, slide_mid: int) -> int:
+        """Drop one ToC row in a single column. Returns the removed row Y."""
+        removed_top = int(title_shape.top)
+        anchor_left = int(title_shape.left)
+        remove_els = []
+        for shape in cls._iter_toc_entry_shapes(
+                toc, anchor_left=anchor_left, slide_mid=slide_mid):
+            if abs(int(shape.top) - removed_top) > _TOC_Y_TOLERANCE:
+                continue
+            remove_els.append(shape._element)  # noqa: SLF001
+        for el in remove_els:
+            parent = el.getparent()
+            if parent is not None:
+                parent.remove(el)
+        return removed_top
+
+    @classmethod
+    def _compact_toc_column_below(
+            cls, toc, *, anchor_left: int, removed_top: int,
+            slide_mid: int) -> None:
+        """Close the hole left by a deleted ToC row in that column only."""
+        next_tops: list[int] = []
+        for shape in cls._iter_toc_entry_shapes(
+                toc, anchor_left=anchor_left, slide_mid=slide_mid):
+            text = cls._toc_shape_text(shape)
+            if not text or text.isdigit():
+                continue
+            top = int(shape.top)
+            if top > removed_top + _TOC_Y_TOLERANCE:
+                next_tops.append(top)
+        if not next_tops:
+            return
+        shift = min(next_tops) - removed_top
+        if shift <= 20_000:
+            return
+        for shape in cls._iter_toc_entry_shapes(
+                toc, anchor_left=anchor_left, slide_mid=slide_mid):
+            if int(shape.top) <= removed_top + _TOC_Y_TOLERANCE:
+                continue
+            shape.top = int(shape.top) - shift
+
+    @classmethod
+    def _set_toc_page_for_title(
+            cls, toc, title: str, page: int, *, slide_mid: int) -> None:
+        """Set the page badge next to *title* in the same column — not the other."""
+        title_shape = None
+        for shape in toc.shapes:
+            if cls._toc_shape_text(shape) == title:
+                title_shape = shape
+                break
+        if title_shape is None:
+            return
+        title_top = int(title_shape.top)
+        anchor_left = int(title_shape.left)
+        for shape in cls._iter_toc_entry_shapes(
+                toc, anchor_left=anchor_left, slide_mid=slide_mid):
+            text = cls._toc_shape_text(shape)
+            if not text.isdigit():
+                continue
+            if abs(int(shape.top) - title_top) > _TOC_Y_TOLERANCE:
+                continue
+            cls._set_text_frame(shape.text_frame, str(page))
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+
+    @classmethod
+    def _sync_toc_after_serp(cls, prs, *, serp_slides: int) -> None:
         """Align ToC page badges after SERP slides are kept or removed.
 
         Template assumes up to 4 SERP slides (Backlinks=17, Synthèse=19).
-        When *serp_slides* is 0, also drop the SERP ToC row.
+        When *serp_slides* is 0, drop the SERP ToC row in its column only
+        (the other column shares the same Y and must stay intact), then
+        compact remaining entries so no blank gap is left.
         """
         if len(prs.slides) < 2:
             return
         toc = prs.slides[1]
+        slide_mid = int(prs.slide_width) // 2
         # GMB détail = 12 → SERP starts at 13 → Backlinks = 13 + serp_slides
         backlinks_page = 13 + max(0, serp_slides)
         synthese_page = backlinks_page + 2
 
         if serp_slides <= 0:
-            serp_tops: list[int] = []
-            for shape in toc.shapes:
-                if not getattr(shape, "has_text_frame", False):
-                    continue
-                text = (shape.text_frame.text or "").strip()
-                if "Comparaison mots-clés" in text:
-                    serp_tops.append(int(shape.top))
-            remove_els = []
-            tolerance = 160_000
-            for shape in toc.shapes:
-                near_serp = any(abs(int(shape.top) - top) <= tolerance
-                                for top in serp_tops)
-                if near_serp:
-                    remove_els.append(shape._element)  # noqa: SLF001
-            for el in remove_els:
-                parent = el.getparent()
-                if parent is not None:
-                    parent.remove(el)
+            serp_titles = [
+                shape for shape in toc.shapes
+                if _TOC_SERP_TITLE in cls._toc_shape_text(shape)
+            ]
+            for title_shape in serp_titles:
+                anchor_left = int(title_shape.left)
+                removed_top = cls._remove_toc_entry_row(
+                    toc, title_shape, slide_mid=slide_mid)
+                cls._compact_toc_column_below(
+                    toc,
+                    anchor_left=anchor_left,
+                    removed_top=removed_top,
+                    slide_mid=slide_mid,
+                )
+            logger.info(
+                "Removed SERP ToC row and compacted column (serp_slides=0)",
+            )
 
-        titles_by_top: dict[int, str] = {}
-        for shape in toc.shapes:
-            if not getattr(shape, "has_text_frame", False):
-                continue
-            text = (shape.text_frame.text or "").strip()
-            if text in {"Backlinks", "Synthèse finale"}:
-                titles_by_top[int(shape.top)] = text
-        for shape in toc.shapes:
-            if not getattr(shape, "has_text_frame", False):
-                continue
-            text = (shape.text_frame.text or "").strip()
-            if not text.isdigit():
-                continue
-            top = int(shape.top)
-            title = None
-            for t_top, name in titles_by_top.items():
-                if abs(top - t_top) <= 80_000:
-                    title = name
-                    break
-            if title == "Backlinks":
-                ReportBuilder._set_text_frame(shape.text_frame, str(backlinks_page))
-            elif title == "Synthèse finale":
-                ReportBuilder._set_text_frame(shape.text_frame, str(synthese_page))
+        cls._set_toc_page_for_title(
+            toc, "Backlinks", backlinks_page, slide_mid=slide_mid)
+        cls._set_toc_page_for_title(
+            toc, "Synthèse finale", synthese_page, slide_mid=slide_mid)
 
     @staticmethod
     def _slide_has_clarity_popular_products(slide) -> bool:
