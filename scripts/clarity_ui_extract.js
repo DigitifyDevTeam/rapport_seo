@@ -60,7 +60,8 @@ function parseArgs() {
   const projectId = get("--project-id");
   const profile = get("--profile");
   const show = has("--show");
-  const auto = has("--auto");
+  const keepalive = has("--keepalive");
+  const auto = has("--auto") || keepalive;
   const record = !auto;
   const recordTimeoutSec = Number(get("--record-timeout") || "900");
   const skipWidgetsRaw = get("--skip-widgets") || "";
@@ -68,10 +69,10 @@ function parseArgs() {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  if (!session || !out) {
+  if (!session || (!out && !keepalive)) {
     throw new Error(
       "Usage: --session <path> --out <path> [--record] [--record-timeout 900] "
-        + "[--auto] [--url <url>] [--screenshot <path>] "
+        + "[--auto] [--keepalive] [--url <url>] [--screenshot <path>] "
         + "[--period-start YYYY-MM-DD] [--period-end YYYY-MM-DD] "
         + "[--project-id <id>] [--profile <chrome-profile-dir>] "
         + "[--skip-widgets popular_products] [--show]",
@@ -89,9 +90,101 @@ function parseArgs() {
     show: show || record,
     auto,
     record,
+    keepalive,
     recordTimeoutMs: Math.max(60, recordTimeoutSec) * 1000,
     skipWidgets,
   };
+}
+
+const SSO_COOKIE_NAME_RE = /^(ESTSAUTH|ESTSAUTHPERSISTENT|ESTSAUTHLIGHT|SignInStateCookie|WLSSC)$/i;
+
+function cookiesHaveSso(cookies) {
+  return (cookies || []).some((cookie) => SSO_COOKIE_NAME_RE.test(cookie.name || ""));
+}
+
+function describeSsoCookies(cookies) {
+  const now = Date.now() / 1000;
+  return (cookies || [])
+    .filter((cookie) => SSO_COOKIE_NAME_RE.test(cookie.name || ""))
+    .map((cookie) => {
+      const exp = cookie.expires;
+      const days = typeof exp === "number" && exp > 0
+        ? `${((exp - now) / 86400).toFixed(1)}d`
+        : "session";
+      return `${cookie.name} host=${cookie.domain || "?"} ${days}`;
+    });
+}
+
+function sanitizeCookieForCdp(cookie) {
+  if (!cookie || !cookie.name) return null;
+  const out = {
+    name: cookie.name,
+    value: cookie.value || "",
+  };
+  if (cookie.domain) out.domain = cookie.domain;
+  if (cookie.path) out.path = cookie.path;
+  if (typeof cookie.secure === "boolean") out.secure = cookie.secure;
+  if (typeof cookie.httpOnly === "boolean") out.httpOnly = cookie.httpOnly;
+  const sameSite = cookie.sameSite;
+  if (sameSite === "None" || sameSite === "Lax" || sameSite === "Strict") {
+    out.sameSite = sameSite;
+  } else if (typeof sameSite === "string") {
+    const mapped = sameSite.charAt(0).toUpperCase() + sameSite.slice(1).toLowerCase();
+    if (mapped === "None" || mapped === "Lax" || mapped === "Strict") {
+      out.sameSite = mapped;
+    }
+  }
+  if (typeof cookie.expires === "number" && cookie.expires > 0) {
+    out.expires = cookie.expires;
+  }
+  if (!out.domain && cookie.url) {
+    out.url = cookie.url;
+  }
+  return out;
+}
+
+async function restoreCookies(page, cookies) {
+  const cleaned = (cookies || []).map(sanitizeCookieForCdp).filter(Boolean);
+  if (!cleaned.length) {
+    console.warn("[clarity] session JSON has no cookies to restore");
+    return 0;
+  }
+  const client = await page.target().createCDPSession();
+  try {
+    await client.send("Network.setCookies", { cookies: cleaned });
+    console.log(`[clarity] restored ${cleaned.length} cookies via CDP`);
+    return cleaned.length;
+  } catch (err) {
+    console.warn(`[clarity] bulk cookie restore failed: ${err.message} — trying one by one`);
+  }
+  let ok = 0;
+  for (const cookie of cleaned) {
+    try {
+      await client.send("Network.setCookies", { cookies: [cookie] });
+      ok += 1;
+    } catch (inner) {
+      console.warn(`[clarity] skip cookie ${cookie.name}: ${inner.message}`);
+    }
+  }
+  console.log(`[clarity] restored ${ok}/${cleaned.length} cookies`);
+  return ok;
+}
+
+function isMicrosoftLoginUrl(href) {
+  const lower = String(href || "").toLowerCase();
+  return (
+    lower.includes("login.microsoftonline.com")
+    || lower.includes("login.live.com")
+    || lower.includes("login.microsoft.com")
+    || /[?&]wa=wsignin/i.test(lower)
+  );
+}
+
+function kpisHaveNumericValue(kpis) {
+  return Object.values(kpis || {}).some((entry) => {
+    const value = entry && entry.value ? String(entry.value) : "";
+    return /\d/.test(value) && !/^n\/a$/i.test(value.trim());
+  });
 }
 
 function parseIsoDate(iso) {
@@ -1993,10 +2086,23 @@ async function waitForClarityDashboard(page, dockerMode = false) {
   const timeoutMs = dockerMode ? 120_000 : 45_000;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (isMicrosoftLoginUrl(page.url())) {
+      console.warn("[clarity] sign-in page detected — re-run clarity_ui_login.js");
+      return "login";
+    }
     const ready = await page.evaluate(() => {
+      const href = String(location.href || "").toLowerCase();
+      if (
+        href.includes("login.microsoftonline.com")
+        || href.includes("login.live.com")
+        || href.includes("login.microsoft.com")
+      ) {
+        return "login";
+      }
       const body = (document.body && document.body.innerText) || "";
       const lower = body.toLowerCase();
-      if (/sign in|se connecter|login\.microsoft/i.test(lower.slice(0, 3000))) {
+      const head = lower.slice(0, 3000);
+      if (/sign in|se connecter|login\.microsoft/i.test(head)) {
         return "login";
       }
       if (
@@ -2279,11 +2385,33 @@ const _CLARITY_AGENCY_IDS = [
  * after a successful capture. Microsoft auth cookies use a sliding window, so
  * refreshing them on every run keeps the session from expiring between reports.
  */
+function backupSessionIfHealthy(sessionPath, cookies) {
+  if (!cookiesHaveSso(cookies) || !fs.existsSync(sessionPath)) return;
+  try {
+    fs.copyFileSync(sessionPath, `${sessionPath}.bak`);
+  } catch (_) {
+    /* ignore backup failures */
+  }
+}
+
 async function resaveClaritySession(page, sessionPath, raw) {
   try {
+    if (isMicrosoftLoginUrl(page.url())) {
+      console.warn("[clarity] skip cookie refresh — still on Microsoft sign-in");
+      return false;
+    }
     const client = await page.target().createCDPSession();
     const { cookies } = await client.send("Network.getAllCookies");
-    if (!cookies || !cookies.length) return;
+    if (!cookies || !cookies.length) return false;
+    const sanitized = cookies.map(sanitizeCookieForCdp).filter(Boolean);
+    if (!cookiesHaveSso(sanitized)) {
+      console.warn(
+        "[clarity] skip cookie refresh — live browser has no ESTSAUTH* cookies "
+          + "(would poison saved sessions)",
+      );
+      return false;
+    }
+    backupSessionIfHealthy(sessionPath, raw && raw.cookies);
     const storage = await page.evaluate(() => {
       const local = {};
       for (let i = 0; i < localStorage.length; i += 1) {
@@ -2296,7 +2424,7 @@ async function resaveClaritySession(page, sessionPath, raw) {
     // pointing at another client's project (cookies stay shared, project ids do not).
     const liveUrl = page.url() || (raw && raw.url) || "";
     const payload = {
-      cookies,
+      cookies: sanitized,
       storage,
       url: liveUrl,
     };
@@ -2323,16 +2451,19 @@ async function resaveClaritySession(page, sessionPath, raw) {
         }
         fs.writeFileSync(
           target,
-          JSON.stringify({ cookies, storage, url: siblingUrl }, null, 2),
+          JSON.stringify({ cookies: sanitized, storage, url: siblingUrl }, null, 2),
           "utf-8",
         );
       } catch (_) {
         /* ignore individual copy failures */
       }
     }
-    console.log("[clarity] session cookies refreshed (sliding renewal)");
+    const sso = describeSsoCookies(sanitized);
+    console.log(`[clarity] session cookies refreshed (sliding renewal): ${sso.join("; ")}`);
+    return true;
   } catch (err) {
     console.warn(`[clarity] cookie re-save skipped: ${err.message}`);
+    return false;
   }
 }
 
@@ -2351,10 +2482,11 @@ async function main() {
     recordTimeoutMs,
     skipWidgets,
     profile,
+    keepalive,
   } = parseArgs();
   const cardTargets = resolveCardCaptures(skipWidgets);
   const sessionPath = path.resolve(session);
-  const outPath = path.resolve(out);
+  const outPath = out ? path.resolve(out) : sessionPath;
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const raw = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
@@ -2377,7 +2509,9 @@ async function main() {
   }
 
   const downloadDir = path.join(path.dirname(outPath), "_clarity_downloads");
-  fs.mkdirSync(downloadDir, { recursive: true });
+  if (!keepalive) {
+    fs.mkdirSync(downloadDir, { recursive: true });
+  }
 
   const dockerMode = ["1", "true", "yes", "on"].includes(
     String(process.env.SEO_REPORT_DOCKER || process.env.SEO_REPORT_BROWSER_NO_SANDBOX || "").toLowerCase(),
@@ -2415,8 +2549,19 @@ async function main() {
     /* ignore */
   }
 
+  const ssoOnDisk = describeSsoCookies(raw.cookies);
+  if (ssoOnDisk.length) {
+    console.log(`[clarity] session SSO cookies: ${ssoOnDisk.join("; ")}`);
+  } else {
+    console.warn(
+      "[clarity] session JSON has no ESTSAUTH* cookies — Microsoft login will likely fail. "
+        + "Re-run: bash scripts/clarity_ui_prepare_vnc_client.sh digitify "
+        + "and tick 'Keep me signed in'.",
+    );
+  }
+
   if (!profileDir && Array.isArray(raw.cookies) && raw.cookies.length) {
-    await page.setCookie(...raw.cookies);
+    await restoreCookies(page, raw.cookies);
   }
 
   await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: dockerMode ? 120_000 : 30_000 });
@@ -2440,6 +2585,17 @@ async function main() {
   if (dashboardState === "login") {
     await browser.close();
     process.exit(2);
+  }
+  if (keepalive) {
+    await new Promise((r) => setTimeout(r, dockerMode ? 8000 : 4000));
+    const refreshed = await resaveClaritySession(page, sessionPath, raw);
+    await browser.close();
+    if (!refreshed) {
+      console.warn("[clarity] keepalive did not refresh cookies");
+      process.exit(2);
+    }
+    console.log("[clarity] keepalive OK — Microsoft session sliding window renewed");
+    process.exit(0);
   }
   if (dashboardState !== "ok" && periodStart && periodEnd) {
     const uiApplied = await applyCustomDateRangeUi(page, periodStart, periodEnd);
@@ -2504,9 +2660,13 @@ async function main() {
 
   enhanceCapturedPngs(path.dirname(outPath));
 
-  // Sliding renewal: re-save the (still valid) cookies so the Microsoft
-  // session keeps working month to month without another manual VNC login.
-  await resaveClaritySession(page, sessionPath, raw);
+  // Sliding renewal only when still authenticated. Never overwrite saved
+  // sessions with login-page cookies (that is how all clients went empty).
+  if (kpisHaveNumericValue(kpis) || cookiesHaveSso(raw.cookies)) {
+    await resaveClaritySession(page, sessionPath, raw);
+  } else {
+    console.warn("[clarity] skip cookie refresh — KPIs empty and no SSO cookies");
+  }
 
   const resolvedProjectId = projectId || extractProjectId(targetUrl) || null;
   const payload = {

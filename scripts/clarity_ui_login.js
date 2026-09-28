@@ -101,7 +101,23 @@ async function main() {
   console.log("Then come back here and press ENTER.");
   await new Promise((resolve) => process.stdin.once("data", resolve));
 
-  const cookies = await page.cookies();
+  const client = await page.target().createCDPSession();
+  const { cookies: allCookies } = await client.send("Network.getAllCookies");
+  const cookies = (allCookies || []).map((cookie) => {
+    const out = {
+      name: cookie.name,
+      value: cookie.value || "",
+    };
+    if (cookie.domain) out.domain = cookie.domain;
+    if (cookie.path) out.path = cookie.path;
+    if (typeof cookie.secure === "boolean") out.secure = cookie.secure;
+    if (typeof cookie.httpOnly === "boolean") out.httpOnly = cookie.httpOnly;
+    if (cookie.sameSite) out.sameSite = cookie.sameSite;
+    if (typeof cookie.expires === "number" && cookie.expires > 0) {
+      out.expires = cookie.expires;
+    }
+    return out;
+  });
   const url = page.url();
   const storage = await page.evaluate(() => {
     const local = {};
@@ -124,6 +140,14 @@ async function main() {
   );
   console.log(`Saved session to ${outPath}`);
   console.log(`Captured dashboard URL: ${url}`);
+  const sso = cookies.filter((c) => /ESTSAUTH/i.test(c.name || ""));
+  if (sso.some((c) => c.name === "ESTSAUTHPERSISTENT")) {
+    console.log("OK: ESTSAUTHPERSISTENT found — session can last weeks with keep-alive.");
+  } else {
+    console.warn(
+      "WARNING: no ESTSAUTHPERSISTENT. Tick 'Keep me signed in' and log in again.",
+    );
+  }
 
   await browser.close();
   // Windows: detached Chrome (userDataDir) can keep Node alive after close().

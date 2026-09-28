@@ -60,6 +60,11 @@ if docker compose --profile tools ps seo-vnc 2>/dev/null | grep -q "Up"; then
   echo "  ./scripts/gmb_ui_prepare_vnc.sh --skip-master"
   echo ""
   echo "Logs: docker compose --profile tools logs -f seo-vnc"
+  echo ""
+  echo "Clarity re-login (all agency clients share one Microsoft account):"
+  echo "  bash scripts/clarity_ui_prepare_vnc_client.sh digitify"
+  echo "Keep session alive between monthly crons:"
+  echo "  15 4 */3 * * ${ROOT}/cron_clarity_keepalive.sh"
 else
   echo "seo-vnc failed to start. Check:"
   echo "  docker compose --profile tools logs seo-vnc"

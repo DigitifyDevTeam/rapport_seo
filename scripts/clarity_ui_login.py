@@ -95,6 +95,34 @@ def _storage_snapshot(page) -> dict[str, dict[str, str]]:
     )
 
 
+def _warn_if_session_not_persistent(cookies: list) -> None:
+    """KMSI ('Keep me signed in') is the only way Microsoft lasts ~90 days."""
+    names = {str(item.get("name") or "") for item in cookies if isinstance(item, dict)}
+    if "ESTSAUTHPERSISTENT" in names:
+        print(
+            "OK: ESTSAUTHPERSISTENT found — session can last weeks if keep-alive runs.",
+            flush=True,
+        )
+        return
+    print("", flush=True)
+    print(
+        "WARNING: no ESTSAUTHPERSISTENT cookie. You probably did not tick "
+        "'Rester connecté' / 'Keep me signed in'.",
+        flush=True,
+    )
+    print(
+        "Without it the Microsoft session dies in hours/days and all Clarity "
+        "reports come back empty. Log in again and tick that box.",
+        flush=True,
+    )
+    if not any(name.startswith("ESTSAUTH") for name in names):
+        print(
+            "WARNING: no ESTSAUTH* cookies at all — this login will not work "
+            "for headless cron.",
+            flush=True,
+        )
+
+
 def main() -> int:
     args = _parse_args()
     out_path = Path(args.out).resolve()
@@ -153,6 +181,7 @@ def main() -> int:
         _propagate_clarity_session(out_path.parent, payload, out_path)
         print(f"Saved session to {out_path}")
         print(f"Captured dashboard URL: {url}")
+        _warn_if_session_not_persistent(cookies)
         browser = getattr(context, "_ephemeral_browser", None)
         context.close()
         if browser:
