@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -35,31 +34,25 @@ _AGENCY_CLARITY_SYNC_IDS = (
 )
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
-    """Write session JSON by rename, so a root-owned file can still be replaced.
+def _write_session_text(path: Path, text: str) -> None:
+    """Overwrite an existing session file.
 
-    Opening the existing file for truncate needs write permission on that file.
-    Replacing it only needs write permission on the directory.
+    Do not create a sibling temp file. The sessions directory often refuses new
+    names (old Docker-owned Chrome caches live there) while the JSON files
+    themselves are already writable by the SSH user.
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    try:
-        os.replace(tmp, path)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
+    path.write_text(text, encoding="utf-8")
 
 
 def _propagate_clarity_session(sessions_dir: Path, payload: dict, source: Path) -> None:
     """Copy one agency login to all Clarity session files (same Microsoft account)."""
     text = json.dumps(payload, indent=2)
-    _atomic_write_text(sessions_dir / "clarity-shared.json", text)
+    _write_session_text(sessions_dir / "clarity-shared.json", text)
     for client_id in _AGENCY_CLARITY_SYNC_IDS:
         target = sessions_dir / f"clarity-{client_id}.json"
         if target.resolve() == source.resolve():
             continue
-        _atomic_write_text(target, text)
+        _write_session_text(target, text)
     print(
         "Synced Clarity cookies to clarity-shared.json and agency client sessions.",
         flush=True,
@@ -252,23 +245,10 @@ def main() -> int:
         payload = {"cookies": cookies, "storage": storage, "url": url}
         text = json.dumps(payload, indent=2)
         try:
-            _atomic_write_text(out_path, text)
+            _write_session_text(out_path, text)
             _propagate_clarity_session(out_path.parent, payload, out_path)
         except OSError as exc:
-            print(
-                f"Cannot write {out_path}: {exc}",
-                file=sys.stderr,
-            )
-            print(
-                "On the VPS, take ownership of the Clarity JSON files only "
-                "(do not chmod Chrome profiles), then run this login again:",
-                file=sys.stderr,
-            )
-            print(
-                "  docker compose --profile tools exec -T -u 0 seo-vnc "
-                "bash -lc 'chown $(id -u):$(id -g) /app/outputs/_sessions/clarity-*.json'",
-                file=sys.stderr,
-            )
+            print(f"Cannot write {out_path}: {exc}", file=sys.stderr)
             context.close()
             return 1
         print(f"Saved session to {out_path}")
