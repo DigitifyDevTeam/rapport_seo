@@ -26,7 +26,30 @@ case "${CLIENT}" in
 esac
 
 gmb_vnc_ensure
-mkdir -p "${PROFILE}" 2>/dev/null || true
+mkdir -p "${ROOT}/outputs/_sessions" "${PROFILE}" 2>/dev/null || true
+
+# Clarity noVNC login does not use Chrome profiles. Those folders are often
+# owned by root and chmod on them fails. Only the session JSON must be writable.
+shopt -s nullglob
+for session_file in "${ROOT}/outputs/_sessions"/clarity-*.json; do
+  if [[ -e "${session_file}" && ! -w "${session_file}" ]]; then
+    rm -f "${session_file}" 2>/dev/null || true
+  fi
+done
+shopt -u nullglob
+if compgen -G "${ROOT}/outputs/_sessions/clarity-*.json" >/dev/null; then
+  unwritable=0
+  for session_file in "${ROOT}/outputs/_sessions"/clarity-*.json; do
+    if [[ -e "${session_file}" && ! -w "${session_file}" ]]; then
+      unwritable=1
+    fi
+  done
+  if [[ "${unwritable}" -eq 1 ]]; then
+    echo "Clarity JSON files are owned by another user. Fixing via container root..."
+    docker compose --profile tools exec -T -u 0 seo-vnc \
+      bash -lc 'chown '"$(id -u):$(id -g)"' /app/outputs/_sessions/clarity-*.json'
+  fi
+fi
 
 echo "=== Clarity login for ${CLIENT} ==="
 echo "1) Chrome opens in noVNC (ephemeral — no Chrome profile needed)."

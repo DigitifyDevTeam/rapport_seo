@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -34,15 +35,31 @@ _AGENCY_CLARITY_SYNC_IDS = (
 )
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write session JSON by rename, so a root-owned file can still be replaced.
+
+    Opening the existing file for truncate needs write permission on that file.
+    Replacing it only needs write permission on the directory.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def _propagate_clarity_session(sessions_dir: Path, payload: dict, source: Path) -> None:
     """Copy one agency login to all Clarity session files (same Microsoft account)."""
     text = json.dumps(payload, indent=2)
-    (sessions_dir / "clarity-shared.json").write_text(text, encoding="utf-8")
+    _atomic_write_text(sessions_dir / "clarity-shared.json", text)
     for client_id in _AGENCY_CLARITY_SYNC_IDS:
         target = sessions_dir / f"clarity-{client_id}.json"
         if target.resolve() == source.resolve():
             continue
-        target.write_text(text, encoding="utf-8")
+        _atomic_write_text(target, text)
     print(
         "Synced Clarity cookies to clarity-shared.json and agency client sessions.",
         flush=True,
@@ -95,32 +112,88 @@ def _storage_snapshot(page) -> dict[str, dict[str, str]]:
     )
 
 
+_GOOGLE_AUTH_COOKIE_NAMES = frozenset({
+    "SID",
+    "HSID",
+    "SSID",
+    "APISID",
+    "SAPISID",
+    "LSID",
+    "ACCOUNT_CHOOSER",
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "__Secure-1PSIDTS",
+    "__Secure-3PSIDTS",
+    "__Host-GAPS",
+})
+
+
+def _cookie_name_set(cookies: list) -> set[str]:
+    return {str(item.get("name") or "") for item in cookies if isinstance(item, dict)}
+
+
+def _has_google_sso(cookies: list) -> bool:
+    names = _cookie_name_set(cookies)
+    if names & _GOOGLE_AUTH_COOKIE_NAMES:
+        return True
+    for item in cookies:
+        if not isinstance(item, dict):
+            continue
+        domain = str(item.get("domain") or "").lower()
+        name = str(item.get("name") or "")
+        if "google." in domain and name in _GOOGLE_AUTH_COOKIE_NAMES:
+            return True
+    return False
+
+
+def _summarize_cookie_hosts(cookies: list) -> str:
+    hosts: dict[str, int] = {}
+    for item in cookies:
+        if not isinstance(item, dict):
+            continue
+        host = str(item.get("domain") or "?").strip() or "?"
+        hosts[host] = hosts.get(host, 0) + 1
+    if not hosts:
+        return "(none)"
+    parts = [f"{host}×{count}" for host, count in sorted(hosts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return ", ".join(parts[:12])
+
+
 def _warn_if_session_not_persistent(cookies: list) -> None:
-    """KMSI ('Keep me signed in') is the only way Microsoft lasts ~90 days."""
-    names = {str(item.get("name") or "") for item in cookies if isinstance(item, dict)}
+    """Explain whether Microsoft KMSI or Google SSO cookies were actually saved."""
+    names = _cookie_name_set(cookies)
+    print(f"Saved {len(cookies)} cookies ({_summarize_cookie_hosts(cookies)}).", flush=True)
     if "ESTSAUTHPERSISTENT" in names:
         print(
-            "OK: ESTSAUTHPERSISTENT found — session can last weeks if keep-alive runs.",
+            "OK: ESTSAUTHPERSISTENT found — Microsoft session can last weeks if keep-alive runs.",
+            flush=True,
+        )
+        return
+    if any(name.startswith("ESTSAUTH") for name in names):
+        print(
+            "WARNING: Microsoft cookies without ESTSAUTHPERSISTENT. "
+            "Tick 'Keep me signed in' on a Microsoft login if you see that box.",
+            flush=True,
+        )
+        return
+    if _has_google_sso(cookies):
+        print(
+            "OK: Google SSO cookies found (Clarity signed in with Google).",
+            flush=True,
+        )
+        print(
+            "There is no Microsoft 'Keep me signed in' box for Google login. "
+            "Install the keep-alive cron — Google still expires unused sessions.",
             flush=True,
         )
         return
     print("", flush=True)
     print(
-        "WARNING: no ESTSAUTHPERSISTENT cookie. You probably did not tick "
-        "'Rester connecté' / 'Keep me signed in'.",
+        "WARNING: no Microsoft ESTSAUTH* and no Google SID/SAPISID cookies. "
+        "Headless cron will hit the sign-in page. Stay on the Clarity dashboard "
+        "with KPI numbers visible, then press ENTER again after a fresh login.",
         flush=True,
     )
-    print(
-        "Without it the Microsoft session dies in hours/days and all Clarity "
-        "reports come back empty. Log in again and tick that box.",
-        flush=True,
-    )
-    if not any(name.startswith("ESTSAUTH") for name in names):
-        print(
-            "WARNING: no ESTSAUTH* cookies at all — this login will not work "
-            "for headless cron.",
-            flush=True,
-        )
 
 
 def main() -> int:
@@ -177,8 +250,27 @@ def main() -> int:
         url = page.url
         storage = _storage_snapshot(page)
         payload = {"cookies": cookies, "storage": storage, "url": url}
-        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        _propagate_clarity_session(out_path.parent, payload, out_path)
+        text = json.dumps(payload, indent=2)
+        try:
+            _atomic_write_text(out_path, text)
+            _propagate_clarity_session(out_path.parent, payload, out_path)
+        except OSError as exc:
+            print(
+                f"Cannot write {out_path}: {exc}",
+                file=sys.stderr,
+            )
+            print(
+                "On the VPS, take ownership of the Clarity JSON files only "
+                "(do not chmod Chrome profiles), then run this login again:",
+                file=sys.stderr,
+            )
+            print(
+                "  docker compose --profile tools exec -T -u 0 seo-vnc "
+                "bash -lc 'chown $(id -u):$(id -g) /app/outputs/_sessions/clarity-*.json'",
+                file=sys.stderr,
+            )
+            context.close()
+            return 1
         print(f"Saved session to {out_path}")
         print(f"Captured dashboard URL: {url}")
         _warn_if_session_not_persistent(cookies)
